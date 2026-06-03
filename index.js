@@ -1,7 +1,9 @@
 import { event_types, eventSource, getRequestHeaders, saveSettingsDebounced } from '../../../../script.js';
 import { AutoComplete } from '../../../autocomplete/AutoComplete.js';
 import { extension_settings, renderExtensionTemplateAsync } from '../../../extensions.js';
-import { oai_settings, promptManager } from '../../../openai.js';
+import { oai_settings, openai_setting_names, promptManager } from '../../../openai.js';
+import { t } from '../../../i18n.js';
+import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
 import { INJECTION_POSITION } from '../../../PromptManager.js';
 import { isMobile, favsToHotswap } from '../../../RossAscends-mods.js';
 import { power_user } from '../../../power-user.js';
@@ -18,6 +20,7 @@ const PRESET_SCROLL_STYLE_ID = 'bai_bai_toolkit_preset_scroll_style';
 const PRESET_SWITCH_BEFORE_HANDLER_KEY = '__baiBaiToolkitPresetSwitchBeforeHandler';
 const PRESET_SWITCH_HANDLER_KEY = '__baiBaiToolkitPresetSwitchHandler';
 const PRESET_SELECT_CHANGE_HANDLER_KEY = '__baiBaiToolkitPresetSelectChangeHandler';
+const PRESET_DELETE_HANDLER_KEY = '__baiBaiToolkitPresetDeleteHandler';
 const PRESET_LIST_ACTION_HANDLER_KEY = '__baiBaiToolkitPresetListActionHandler';
 const PRESET_TOGGLE_HANDLER_KEY = '__baiBaiToolkitPresetToggleHandler';
 const PRESET_SAVE_HANDLER_KEY = '__baiBaiToolkitPresetSaveHandler';
@@ -27,6 +30,7 @@ const WORLD_INFO_CHARACTER_FILTER_APPEND_PATCH_KEY = '__baiBaiToolkitWorldInfoCh
 const CHAT_MANAGEMENT_POPUP_SELECTOR = '#shadow_select_chat_popup';
 const CHAT_MANAGEMENT_LIST_SELECTOR = '#select_chat_div';
 const OPENAI_PRESET_SELECT_SELECTOR = '#settings_preset_openai';
+const OPENAI_PRESET_DELETE_SELECTOR = '#delete_oai_preset';
 const PRESET_PROMPT_MANAGER_LIST_SELECTOR = '#completion_prompt_manager_list';
 const PRESET_PROMPT_MANAGER_SAVE_SELECTOR = '#completion_prompt_manager_popup_entry_form_save';
 const WORLD_INFO_ENTRY_DRAWER_TOGGLE_SELECTOR = '#world_popup_entries_list > .world_entry > .world_entry_form > .inline-drawer > .inline-drawer-header .inline-drawer-toggle';
@@ -545,6 +549,7 @@ function handleWorldInfoDrawerToggleClick(event) {
 
 function applyPresetSwitchOptimization() {
     applyPresetSelectChangeDeferral();
+    applyPresetDeleteSelectionOptimization();
     applyPresetListActionDelegation();
     applyPresetSwitchBeforeOptimization();
 
@@ -563,6 +568,19 @@ function applyPresetSwitchOptimization() {
     } else {
         eventSource.on(event_types.OAI_PRESET_CHANGED_AFTER, handler);
     }
+}
+
+function applyPresetDeleteSelectionOptimization() {
+    if (extensionState[PRESET_DELETE_HANDLER_KEY]) {
+        return;
+    }
+
+    const handler = (event) => {
+        handleOpenAiPresetDeleteClick(event);
+    };
+
+    extensionState[PRESET_DELETE_HANDLER_KEY] = handler;
+    document.addEventListener('click', handler, true);
 }
 
 function applyPresetListActionDelegation() {
@@ -632,6 +650,81 @@ function deferOpenAiPresetSelectChangeOnMobile(event) {
             extensionState.allowOpenAiPresetSelectChange = false;
         }
     }, 0);
+}
+
+function handleOpenAiPresetDeleteClick(event) {
+    if (!settings.presetSwitchOptimizationEnabled) {
+        return;
+    }
+
+    const target = event.target instanceof Element ? event.target : null;
+    const button = target?.closest(OPENAI_PRESET_DELETE_SELECTOR);
+
+    if (!button) {
+        return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    void deleteOpenAiPresetSelectingNext();
+}
+
+async function deleteOpenAiPresetSelectingNext() {
+    const confirm = await callGenericPopup(t`Delete the preset? This action is irreversible and your current settings will be overwritten.`, POPUP_TYPE.CONFIRM);
+
+    if (!confirm) {
+        return;
+    }
+
+    const select = document.querySelector(OPENAI_PRESET_SELECT_SELECTOR);
+    const nameToDelete = oai_settings.preset_settings_openai;
+
+    if (!(select instanceof HTMLSelectElement) || !nameToDelete) {
+        return;
+    }
+
+    const deletedIndex = Math.max(0, select.selectedIndex);
+    const value = openai_setting_names?.[nameToDelete];
+
+    if (value !== undefined) {
+        select.querySelector(`option[value="${escapeCssSelectorValue(value)}"]`)?.remove();
+    } else if (select.selectedIndex >= 0) {
+        select.options[select.selectedIndex]?.remove();
+    }
+
+    delete openai_setting_names[nameToDelete];
+    oai_settings.preset_settings_openai = null;
+
+    if (Object.keys(openai_setting_names).length && select.options.length) {
+        const nextIndex = deletedIndex < select.options.length ? deletedIndex : 0;
+        select.selectedIndex = nextIndex;
+        oai_settings.preset_settings_openai = select.options[nextIndex]?.text ?? null;
+        $(select).trigger('change');
+    }
+
+    const response = await fetch('/api/presets/delete', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ apiId: 'openai', name: nameToDelete }),
+    });
+
+    if (!response.ok) {
+        toastr.warning(t`Preset was not deleted from server`);
+    } else {
+        toastr.success(t`Preset deleted`);
+        await eventSource.emit(event_types.PRESET_DELETED, { apiId: 'openai', name: nameToDelete });
+    }
+
+    saveSettingsDebounced();
+}
+
+function escapeCssSelectorValue(value) {
+    const text = String(value);
+    return typeof globalThis.CSS?.escape === 'function'
+        ? globalThis.CSS.escape(text)
+        : text.replace(/["\\]/g, '\\$&');
 }
 
 function handlePresetListActionClick(event) {

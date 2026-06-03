@@ -20,7 +20,7 @@ The chat file manager optimization only applies when:
 
 Keyword searches and group chats fall back to SillyTavern's original `/api/chats/search` behavior.
 
-The prompt preset switch optimization only applies to the OpenAI/chat-completion prompt manager. It applies prompt list fields before the rest of the preset switch finishes so the list can repaint earlier. Its fast renderer uses indexed prompt lookups and delegated row actions to avoid repeated per-row searches and listener binding. It preserves SillyTavern's original behavior when disabled.
+The prompt preset switch optimization only applies to the OpenAI/chat-completion prompt manager. It applies prompt list fields before the rest of the preset switch finishes so the list can repaint earlier. Its fast renderer uses indexed prompt lookups and delegated row actions to avoid repeated per-row searches and listener binding. When deleting the selected OpenAI preset, it selects the next preset in the list, or the first preset when deleting the last one. It preserves SillyTavern's original behavior when disabled.
 
 The prompt preset quick-operation optimization only applies to existing rows in the OpenAI/chat-completion prompt manager list. New prompt creation still falls back to SillyTavern's original behavior because it changes the available prompt list. The feature switch preserves SillyTavern's original behavior when disabled.
 
