@@ -1,11 +1,12 @@
-import { getRequestHeaders, saveSettingsDebounced } from '../../../../script.js';
+import { event_types, eventSource, getRequestHeaders, saveSettingsDebounced } from '../../../../script.js';
 import { AutoComplete } from '../../../autocomplete/AutoComplete.js';
 import { extension_settings, renderExtensionTemplateAsync } from '../../../extensions.js';
-import { promptManager } from '../../../openai.js';
+import { oai_settings, promptManager } from '../../../openai.js';
 import { INJECTION_POSITION } from '../../../PromptManager.js';
 import { isMobile, favsToHotswap } from '../../../RossAscends-mods.js';
 import { power_user } from '../../../power-user.js';
-import { debounce, resetScrollHeight, timestampToMoment } from '../../../utils.js';
+import { renderTemplateAsync } from '../../../templates.js';
+import { debounce, escapeHtml, resetScrollHeight, timestampToMoment } from '../../../utils.js';
 
 const LOG_PREFIX = '[柏宝箱]';
 const MODULE_NAME = getModuleName();
@@ -14,6 +15,10 @@ const EXTENSION_KEY = '__baiBaiToolkitExtensionInstalled';
 const FAST_CHAT_SEARCH_FETCH_KEY = '__baiBaiToolkitFastChatSearchFetchPatched';
 const FAST_CHAT_LIST_SCROLL_STYLE_ID = 'bai_bai_toolkit_fast_chat_list_scroll_style';
 const PRESET_SCROLL_STYLE_ID = 'bai_bai_toolkit_preset_scroll_style';
+const PRESET_SWITCH_BEFORE_HANDLER_KEY = '__baiBaiToolkitPresetSwitchBeforeHandler';
+const PRESET_SWITCH_HANDLER_KEY = '__baiBaiToolkitPresetSwitchHandler';
+const PRESET_SELECT_CHANGE_HANDLER_KEY = '__baiBaiToolkitPresetSelectChangeHandler';
+const PRESET_LIST_ACTION_HANDLER_KEY = '__baiBaiToolkitPresetListActionHandler';
 const PRESET_TOGGLE_HANDLER_KEY = '__baiBaiToolkitPresetToggleHandler';
 const PRESET_SAVE_HANDLER_KEY = '__baiBaiToolkitPresetSaveHandler';
 const WORLD_INFO_DRAWER_HANDLER_KEY = '__baiBaiToolkitWorldInfoDrawerHandler';
@@ -21,6 +26,7 @@ const WORLD_INFO_LAZY_SELECT2_PATCH_KEY = '__baiBaiToolkitWorldInfoLazySelect2Pa
 const WORLD_INFO_CHARACTER_FILTER_APPEND_PATCH_KEY = '__baiBaiToolkitWorldInfoCharacterFilterAppendPatched';
 const CHAT_MANAGEMENT_POPUP_SELECTOR = '#shadow_select_chat_popup';
 const CHAT_MANAGEMENT_LIST_SELECTOR = '#select_chat_div';
+const OPENAI_PRESET_SELECT_SELECTOR = '#settings_preset_openai';
 const PRESET_PROMPT_MANAGER_LIST_SELECTOR = '#completion_prompt_manager_list';
 const PRESET_PROMPT_MANAGER_SAVE_SELECTOR = '#completion_prompt_manager_popup_entry_form_save';
 const WORLD_INFO_ENTRY_DRAWER_TOGGLE_SELECTOR = '#world_popup_entries_list > .world_entry > .world_entry_form > .inline-drawer > .inline-drawer-header .inline-drawer-toggle';
@@ -28,6 +34,25 @@ const WORLD_INFO_ENTRY_DRAWER_SELECTOR = '#world_popup_entries_list > .world_ent
 const WORLD_INFO_LAZY_SELECT2_SELECTOR = '#world_popup_entries_list .world_entry_edit select[name="characterFilter"], #world_popup_entries_list .world_entry_edit select[name="triggers"]';
 const WORLD_INFO_LAZY_SELECT2_DATASET_KEY = 'baiBaiToolkitLazySelect2';
 const WORLD_INFO_DEFERRED_OPTIONS_DATASET_KEY = 'baiBaiToolkitDeferredOptions';
+const FORCE_EDIT_PROMPTS = new Set([
+    'charDescription',
+    'charPersonality',
+    'scenario',
+    'personaDescription',
+    'worldInfoBefore',
+    'worldInfoAfter',
+]);
+const FORCE_TOGGLE_PROMPTS = new Set([
+    'charDescription',
+    'charPersonality',
+    'scenario',
+    'personaDescription',
+    'worldInfoBefore',
+    'worldInfoAfter',
+    'main',
+    'chatHistory',
+    'dialogueExamples',
+]);
 const defaultSettings = {
     resizeGuardEnabled: true,
     worldInfoDrawerOptimizationEnabled: true,
@@ -35,6 +60,7 @@ const defaultSettings = {
     chatListScrollOptimizationEnabled: true,
     chatListAutoClearEnabled: true,
     presetScrollOptimizationEnabled: true,
+    presetSwitchOptimizationEnabled: true,
     presetToggleOptimizationEnabled: true,
 };
 const settings = { ...defaultSettings };
@@ -164,6 +190,14 @@ async function renderSettingsPanel() {
             applyPresetScrollOptimization();
         });
 
+    $('#bai_bai_toolkit_preset_switch_optimization_enabled')
+        .prop('checked', settings.presetSwitchOptimizationEnabled)
+        .on('input', function () {
+            settings.presetSwitchOptimizationEnabled = Boolean($(this).prop('checked'));
+            saveExtensionSettings();
+            applyPresetSwitchOptimization();
+        });
+
     $('#bai_bai_toolkit_preset_toggle_optimization_enabled')
         .prop('checked', settings.presetToggleOptimizationEnabled)
         .on('input', function () {
@@ -188,6 +222,7 @@ function applyFeatureSettings() {
     applyWorldInfoLazySelect2Optimization();
     applyWorldInfoCharacterFilterOptionsOptimization();
     applyPresetScrollOptimization();
+    applyPresetSwitchOptimization();
     applyPresetToggleOptimization();
     applyPresetSaveOptimization();
 }
@@ -508,6 +543,431 @@ function handleWorldInfoDrawerToggleClick(event) {
     }
 }
 
+function applyPresetSwitchOptimization() {
+    applyPresetSelectChangeDeferral();
+    applyPresetListActionDelegation();
+    applyPresetSwitchBeforeOptimization();
+
+    if (extensionState[PRESET_SWITCH_HANDLER_KEY]) {
+        return;
+    }
+
+    const handler = async () => {
+        await handleOpenAiPresetChangedAfter();
+    };
+
+    extensionState[PRESET_SWITCH_HANDLER_KEY] = handler;
+
+    if (typeof eventSource.makeFirst === 'function') {
+        eventSource.makeFirst(event_types.OAI_PRESET_CHANGED_AFTER, handler);
+    } else {
+        eventSource.on(event_types.OAI_PRESET_CHANGED_AFTER, handler);
+    }
+}
+
+function applyPresetListActionDelegation() {
+    if (extensionState[PRESET_LIST_ACTION_HANDLER_KEY]) {
+        return;
+    }
+
+    const handler = (event) => {
+        handlePresetListActionClick(event);
+    };
+
+    extensionState[PRESET_LIST_ACTION_HANDLER_KEY] = handler;
+    document.addEventListener('click', handler, true);
+}
+
+function applyPresetSwitchBeforeOptimization() {
+    if (extensionState[PRESET_SWITCH_BEFORE_HANDLER_KEY]) {
+        return;
+    }
+
+    const handler = async (event) => {
+        await handleOpenAiPresetChangedBefore(event);
+    };
+
+    extensionState[PRESET_SWITCH_BEFORE_HANDLER_KEY] = handler;
+
+    if (typeof eventSource.makeLast === 'function') {
+        eventSource.makeLast(event_types.OAI_PRESET_CHANGED_BEFORE, handler);
+    } else {
+        eventSource.on(event_types.OAI_PRESET_CHANGED_BEFORE, handler);
+    }
+}
+
+function applyPresetSelectChangeDeferral() {
+    if (extensionState[PRESET_SELECT_CHANGE_HANDLER_KEY]) {
+        return;
+    }
+
+    const handler = (event) => {
+        deferOpenAiPresetSelectChangeOnMobile(event);
+    };
+
+    extensionState[PRESET_SELECT_CHANGE_HANDLER_KEY] = handler;
+    document.addEventListener('change', handler, true);
+}
+
+function deferOpenAiPresetSelectChangeOnMobile(event) {
+    if (!settings.presetSwitchOptimizationEnabled || !isMobile()) {
+        return;
+    }
+
+    const select = event.target instanceof HTMLSelectElement ? event.target : null;
+
+    if (!select?.matches(OPENAI_PRESET_SELECT_SELECTOR) || extensionState.allowOpenAiPresetSelectChange) {
+        return;
+    }
+
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    select.blur();
+
+    setTimeout(() => {
+        extensionState.allowOpenAiPresetSelectChange = true;
+        try {
+            $(select).trigger('change');
+        } finally {
+            extensionState.allowOpenAiPresetSelectChange = false;
+        }
+    }, 0);
+}
+
+function handlePresetListActionClick(event) {
+    if (!settings.presetSwitchOptimizationEnabled) {
+        return;
+    }
+
+    const target = event.target instanceof Element ? event.target : null;
+
+    if (!target?.closest(PRESET_PROMPT_MANAGER_LIST_SELECTOR)) {
+        return;
+    }
+
+    const action = target.closest('.prompt-manager-detach-action, .prompt-manager-inspect-action, .prompt-manager-edit-action');
+
+    if (!action) {
+        return;
+    }
+
+    const handler = action.classList.contains('prompt-manager-detach-action')
+        ? promptManager?.handleDetach
+        : action.classList.contains('prompt-manager-inspect-action')
+            ? promptManager?.handleInspect
+            : promptManager?.handleEdit;
+
+    if (typeof handler !== 'function') {
+        return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    try {
+        handler.call(promptManager, event);
+    } catch (error) {
+        console.debug(`${LOG_PREFIX} Failed to handle prompt manager list action`, error);
+    }
+}
+
+async function handleOpenAiPresetChangedBefore(event) {
+    extensionState.openAiPresetSwitchEarlyRendered = false;
+
+    if (!settings.presetSwitchOptimizationEnabled || !isPromptManagerReadyForFastPresetSwitch()) {
+        return;
+    }
+
+    const preset = event?.preset;
+
+    if (!preset || typeof preset !== 'object' || (!Array.isArray(preset.prompts) && !Array.isArray(preset.prompt_order))) {
+        return;
+    }
+
+    try {
+        applyPromptManagerPresetFieldsEarly(preset);
+        await renderPromptManagerListWithoutTokenStats();
+        markPromptManagerTokensPending();
+        extensionState.openAiPresetSwitchEarlyRendered = true;
+        await waitForNextPaint();
+    } catch (error) {
+        extensionState.openAiPresetSwitchEarlyRendered = false;
+        console.debug(`${LOG_PREFIX} Failed to early-render prompt manager after preset switch`, error);
+    }
+}
+
+async function handleOpenAiPresetChangedAfter() {
+    if (!settings.presetSwitchOptimizationEnabled || !isPromptManagerReadyForFastPresetSwitch()) {
+        return;
+    }
+
+    try {
+        if (!extensionState.openAiPresetSwitchEarlyRendered) {
+            await renderPromptManagerListWithoutTokenStats();
+            markPromptManagerTokensPending();
+        }
+
+        suppressPromptManagerDebouncedRenderForCurrentTick();
+        refreshPromptManagerTokensAfterPresetSwitchDebounced();
+    } catch (error) {
+        console.debug(`${LOG_PREFIX} Failed to fast-render prompt manager after preset switch`, error);
+    } finally {
+        extensionState.openAiPresetSwitchEarlyRendered = false;
+    }
+}
+
+function isPromptManagerReadyForFastPresetSwitch() {
+    return Boolean(
+        promptManager
+        && typeof promptManager.renderDebounced === 'function'
+        && typeof promptManager.renderPromptManager === 'function'
+        && typeof promptManager.renderPromptManagerListItems === 'function'
+        && promptManager.containerElement
+        && promptManager.serviceSettings,
+    );
+}
+
+function applyPromptManagerPresetFieldsEarly(preset) {
+    if (Array.isArray(preset.prompts)) {
+        oai_settings.prompts = structuredClone(preset.prompts);
+    }
+
+    if (Array.isArray(preset.prompt_order)) {
+        oai_settings.prompt_order = structuredClone(preset.prompt_order);
+    }
+
+    promptManager.serviceSettings = oai_settings;
+    promptManager.sanitizeServiceSettings?.();
+}
+
+async function renderPromptManagerListWithoutTokenStats() {
+    const scrollContainer = promptManager.containerElement.closest('.scrollableInner');
+    const scrollTop = scrollContainer?.scrollTop;
+
+    promptManager.error = null;
+    await promptManager.renderPromptManager();
+    await renderPromptManagerListItemsFast();
+    schedulePromptManagerDraggableInit();
+
+    if (typeof scrollTop === 'number') {
+        scrollContainer?.scrollTo(0, scrollTop);
+    }
+}
+
+async function renderPromptManagerListItemsFast() {
+    const promptManagerList = promptManager.listElement;
+
+    if (!promptManager.serviceSettings?.prompts || !promptManagerList) {
+        return;
+    }
+
+    const { prefix } = promptManager.configuration;
+    const promptOrder = promptManager.getPromptOrderForCharacter?.(promptManager.activeCharacter) ?? [];
+    const prompts = promptManager.serviceSettings.prompts.filter(Boolean);
+    const promptById = new Map(prompts.map(prompt => [prompt.identifier, prompt]));
+    const orderEntryById = new Map(promptOrder.filter(Boolean).map(entry => [entry.identifier, entry]));
+    const counts = promptManager.tokenHandler?.getCounts?.() ?? {};
+    const toggleDisabled = new Set(promptManager.configuration.toggleDisabled ?? []);
+    const overriddenPrompts = new Set(Array.isArray(promptManager.overriddenPrompts) ? promptManager.overriddenPrompts : []);
+    const tokenBudget = promptManager.serviceSettings.openai_max_context - promptManager.serviceSettings.openai_max_tokens;
+    const isTokenUsageWarning = promptManager.tokenUsage > tokenBudget * 0.8;
+
+    let listItemHtml = await renderTemplateAsync('promptManagerListHeader', { prefix });
+
+    for (const orderEntry of promptOrder) {
+        const prompt = promptById.get(orderEntry?.identifier);
+
+        if (!prompt) {
+            continue;
+        }
+
+        const listEntry = orderEntryById.get(prompt.identifier) ?? orderEntry;
+        const enabledClass = listEntry?.enabled ? '' : `${prefix}prompt_manager_prompt_disabled`;
+        const draggableClass = `${prefix}prompt_manager_prompt_draggable`;
+        const markerClass = prompt.marker ? `${prefix}prompt_manager_marker` : '';
+        const tokens = counts[prompt.identifier] ?? 0;
+        const { warningClass, warningTitle } = getPromptTokenWarning({
+            prompt,
+            tokens,
+            isTokenUsageWarning,
+        });
+
+        const calculatedTokens = tokens ? tokens : '-';
+        const canDelete = false === prompt.system_prompt;
+        const canEdit = FORCE_EDIT_PROMPTS.has(prompt.identifier) || !prompt.marker;
+        const canToggle = prompt.marker && !FORCE_TOGGLE_PROMPTS.has(prompt.identifier)
+            ? false
+            : !toggleDisabled.has(prompt.identifier);
+        const detachSpanHtml = canDelete
+            ? '<span title="Remove" class="prompt-manager-detach-action caution fa-solid fa-chain-broken fa-xs"></span>'
+            : '<span class="fa-solid"></span>';
+        const editSpanHtml = canEdit
+            ? '<span title="edit" class="prompt-manager-edit-action fa-solid fa-pencil fa-xs"></span>'
+            : '<span class="fa-solid"></span>';
+        const toggleSpanHtml = canToggle
+            ? `<span class="prompt-manager-toggle-action ${listEntry?.enabled ? 'fa-solid fa-toggle-on' : 'fa-solid fa-toggle-off'}"></span>`
+            : '<span class="fa-solid"></span>';
+
+        listItemHtml += renderPromptManagerListRow({
+            prefix,
+            prompt,
+            enabledClass,
+            draggableClass,
+            markerClass,
+            importantClass: getPromptImportantClass(prompt, prefix),
+            detachSpanHtml,
+            editSpanHtml,
+            toggleSpanHtml,
+            warningClass,
+            warningTitle,
+            calculatedTokens,
+            isOverriddenPrompt: overriddenPrompts.has(prompt.identifier),
+        });
+    }
+
+    promptManagerList.innerHTML = listItemHtml;
+}
+
+function renderPromptManagerListRow({
+    prefix,
+    prompt,
+    enabledClass,
+    draggableClass,
+    markerClass,
+    importantClass,
+    detachSpanHtml,
+    editSpanHtml,
+    toggleSpanHtml,
+    warningClass,
+    warningTitle,
+    calculatedTokens,
+    isOverriddenPrompt,
+}) {
+    const encodedId = escapeHtml(prompt.identifier);
+    const encodedName = escapeHtml(prompt.name ?? '');
+    const isMarkerPrompt = prompt.marker && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE;
+    const isSystemPrompt = !prompt.marker && prompt.system_prompt && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE && !prompt.forbid_overrides;
+    const isImportantPrompt = !prompt.marker && prompt.system_prompt && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE && prompt.forbid_overrides;
+    const isUserPrompt = !prompt.marker && !prompt.system_prompt && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE;
+    const isInjectionPrompt = prompt.injection_position === INJECTION_POSITION.ABSOLUTE;
+    const iconLookup = prompt.role === 'system' && (prompt.marker || prompt.system_prompt) ? '' : prompt.role;
+    const promptRoles = {
+        assistant: { roleIcon: 'fa-robot', roleTitle: 'Prompt will be sent as Assistant' },
+        user: { roleIcon: 'fa-user', roleTitle: 'Prompt will be sent as User' },
+    };
+    const roleIcon = promptRoles[iconLookup]?.roleIcon || '';
+    const roleTitle = promptRoles[iconLookup]?.roleTitle || '';
+
+    return `
+        <li class="${prefix}prompt_manager_prompt ${draggableClass} ${enabledClass} ${markerClass} ${importantClass}" data-pm-identifier="${encodedId}">
+            <span class="drag-handle">☰</span>
+            <span class="${prefix}prompt_manager_prompt_name" data-pm-name="${encodedName}">
+                ${isMarkerPrompt ? '<span class="fa-fw fa-solid fa-thumb-tack" title="Marker"></span>' : ''}
+                ${isSystemPrompt ? '<span class="fa-fw fa-solid fa-square-poll-horizontal" title="Global Prompt"></span>' : ''}
+                ${isImportantPrompt ? '<span class="fa-fw fa-solid fa-star" title="Important Prompt"></span>' : ''}
+                ${isUserPrompt ? '<span class="fa-fw fa-solid fa-asterisk" title="Preset Prompt"></span>' : ''}
+                ${isInjectionPrompt ? '<span class="fa-fw fa-solid fa-syringe" title="In-Chat Injection"></span>' : ''}
+                ${promptManager.isPromptInspectionAllowed?.(prompt) ? `<a title="${encodedName}" class="prompt-manager-inspect-action">${encodedName}</a>` : `<span title="${encodedName}">${encodedName}</span>`}
+                ${roleIcon ? `<span data-role="${escapeHtml(prompt.role)}" class="fa-xs fa-solid ${roleIcon}" title="${roleTitle}"></span>` : ''}
+                ${isInjectionPrompt ? `<small class="prompt-manager-injection-depth">@ ${escapeHtml(prompt.injection_depth?.toString?.() ?? '')}</small>` : ''}
+                ${isOverriddenPrompt ? '<small class="fa-solid fa-address-card prompt-manager-overridden" title="Pulled from a character card"></small>' : ''}
+            </span>
+            <span>
+                <span class="prompt_manager_prompt_controls">
+                    ${detachSpanHtml}
+                    ${editSpanHtml}
+                    ${toggleSpanHtml}
+                </span>
+            </span>
+            <span class="prompt_manager_prompt_tokens" data-pm-tokens="${calculatedTokens}"><span class="${warningClass}" title="${warningTitle}"> </span>${calculatedTokens}</span>
+        </li>
+    `;
+}
+
+function getPromptImportantClass(prompt, prefix) {
+    return !prompt.marker && prompt.system_prompt && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE && prompt.forbid_overrides
+        ? `${prefix}prompt_manager_important`
+        : '';
+}
+
+function getPromptTokenWarning({ prompt, tokens, isTokenUsageWarning }) {
+    const result = { warningClass: '', warningTitle: '' };
+
+    if (!isTokenUsageWarning || prompt.identifier !== 'chatHistory') {
+        return result;
+    }
+
+    if (tokens <= promptManager.configuration.dangerTokenThreshold) {
+        result.warningClass = 'fa-solid tooltip fa-triangle-exclamation text_danger';
+        result.warningTitle = 'Very little of your chat history is being sent, consider deactivating some other prompts.';
+    } else if (tokens <= promptManager.configuration.warningTokenThreshold) {
+        result.warningClass = 'fa-solid tooltip fa-triangle-exclamation text_warning';
+        result.warningTitle = 'Only a few messages worth chat history is being sent.';
+    }
+
+    return result;
+}
+
+function schedulePromptManagerDraggableInit() {
+    const initId = (extensionState.promptManagerDraggableInitId ?? 0) + 1;
+    extensionState.promptManagerDraggableInitId = initId;
+
+    setTimeout(() => {
+        if (extensionState.promptManagerDraggableInitId !== initId) {
+            return;
+        }
+
+        try {
+            promptManager.makeDraggable?.();
+        } catch (error) {
+            console.debug(`${LOG_PREFIX} Failed to initialize prompt manager sorting`, error);
+        }
+    }, 0);
+}
+
+function waitForNextPaint() {
+    return new Promise(resolve => {
+        let settled = false;
+        const finish = () => {
+            if (settled) {
+                return;
+            }
+
+            settled = true;
+            clearTimeout(fallback);
+            resolve();
+        };
+        const fallback = setTimeout(finish, 80);
+
+        if (typeof requestAnimationFrame !== 'function') {
+            finish();
+            return;
+        }
+
+        requestAnimationFrame(() => setTimeout(finish, 0));
+    });
+}
+
+function suppressPromptManagerDebouncedRenderForCurrentTick() {
+    const originalRenderDebounced = promptManager.renderDebounced;
+
+    if (typeof originalRenderDebounced !== 'function' || originalRenderDebounced.__baiBaiToolkitPresetSwitchSuppressed) {
+        return;
+    }
+
+    const suppressedRenderDebounced = () => {};
+    suppressedRenderDebounced.__baiBaiToolkitPresetSwitchSuppressed = true;
+    suppressedRenderDebounced.__baiBaiToolkitOriginalRenderDebounced = originalRenderDebounced;
+    promptManager.renderDebounced = suppressedRenderDebounced;
+
+    setTimeout(() => {
+        if (promptManager?.renderDebounced === suppressedRenderDebounced) {
+            promptManager.renderDebounced = originalRenderDebounced;
+        }
+    }, 0);
+}
+
 function applyPresetToggleOptimization() {
     if (extensionState[PRESET_TOGGLE_HANDLER_KEY]) {
         return;
@@ -746,8 +1206,11 @@ function appendIcon(container, className, title) {
     container.append(icon, document.createTextNode(' '));
 }
 
-const refreshPromptManagerTokensDebounced = debounce(async () => {
-    if (!settings.presetToggleOptimizationEnabled || !promptManager?.tryGenerate) {
+const refreshPromptManagerTokensDebounced = debounce(refreshPromptManagerTokens, 1000);
+const refreshPromptManagerTokensAfterPresetSwitchDebounced = debounce(refreshPromptManagerTokens, 250);
+
+async function refreshPromptManagerTokens() {
+    if (!isPromptManagerTokenRefreshEnabled()) {
         return;
     }
 
@@ -757,7 +1220,34 @@ const refreshPromptManagerTokensDebounced = debounce(async () => {
     } catch (error) {
         console.debug(`${LOG_PREFIX} Failed to refresh prompt manager token counts`, error);
     }
-}, 1000);
+}
+
+function isPromptManagerTokenRefreshEnabled() {
+    return Boolean(
+        promptManager?.tryGenerate
+        && (settings.presetToggleOptimizationEnabled || settings.presetSwitchOptimizationEnabled),
+    );
+}
+
+function markPromptManagerTokensPending() {
+    const list = document.querySelector(PRESET_PROMPT_MANAGER_LIST_SELECTOR);
+
+    if (!list) {
+        return;
+    }
+
+    for (const row of list.querySelectorAll('li.completion_prompt_manager_prompt[data-pm-identifier]')) {
+        updatePromptTokenCell(row, null);
+    }
+
+    const header = document.querySelector('.completion_prompt_manager_header');
+    const totalContainer = header?.querySelector(':scope > div:last-child');
+    const totalLabel = totalContainer?.querySelector('span');
+
+    if (totalContainer && totalLabel) {
+        totalContainer.replaceChildren(totalLabel, document.createTextNode(' - '));
+    }
+}
 
 function updatePromptManagerTokenDisplay() {
     const counts = promptManager?.tokenHandler?.getCounts?.();
