@@ -35,6 +35,9 @@ const OPENAI_PRESET_DELETE_SELECTOR = '#delete_oai_preset';
 const PRESET_PROMPT_MANAGER_LIST_SELECTOR = '#completion_prompt_manager_list';
 const PRESET_PROMPT_MANAGER_SAVE_SELECTOR = '#completion_prompt_manager_popup_entry_form_save';
 const DESCRIPTION_TEXTAREA_SELECTOR = '#description_textarea, textarea.maximized_textarea[data-for="description_textarea"]';
+const DESCRIPTION_INPUT_DEFER_MIN_LENGTH = 2000;
+const DESCRIPTION_INPUT_DEFER_DELAY = 160;
+const DEFERRED_DESCRIPTION_INPUT_KEY = '__baiBaiToolkitDeferredDescriptionInput';
 const WORLD_INFO_ENTRY_DRAWER_TOGGLE_SELECTOR = '#world_popup_entries_list > .world_entry > .world_entry_form > .inline-drawer > .inline-drawer-header .inline-drawer-toggle';
 const WORLD_INFO_ENTRY_DRAWER_SELECTOR = '#world_popup_entries_list > .world_entry > .world_entry_form > .inline-drawer';
 const WORLD_INFO_LAZY_SELECT2_SELECTOR = '#world_popup_entries_list .world_entry_edit select[name="characterFilter"], #world_popup_entries_list .world_entry_edit select[name="triggers"]';
@@ -1451,9 +1454,94 @@ function removeTextareaScrollOptimizationStyle() {
 function applyImeCommitOptimization() {
     if (settings.imeCommitOptimizationEnabled) {
         patchAutoCompleteShowForImeCommit();
+        installImeCommitInputDeferral();
     } else {
         restoreAutoCompleteShowForImeCommit();
+        uninstallImeCommitInputDeferral();
     }
+}
+
+function installImeCommitInputDeferral() {
+    if (extensionState.imeCommitInputDeferralHandler) {
+        return;
+    }
+
+    const inputHandler = event => handleDescriptionInputCapture(event);
+    const flushHandler = event => flushDeferredDescriptionInput(event.target);
+
+    document.addEventListener('input', inputHandler, true);
+    document.addEventListener('focusout', flushHandler, true);
+    extensionState.imeCommitInputDeferralHandler = inputHandler;
+    extensionState.imeCommitInputDeferralFlushHandler = flushHandler;
+}
+
+function uninstallImeCommitInputDeferral() {
+    if (extensionState.imeCommitInputDeferralHandler) {
+        document.removeEventListener('input', extensionState.imeCommitInputDeferralHandler, true);
+        delete extensionState.imeCommitInputDeferralHandler;
+    }
+
+    if (extensionState.imeCommitInputDeferralFlushHandler) {
+        document.removeEventListener('focusout', extensionState.imeCommitInputDeferralFlushHandler, true);
+        delete extensionState.imeCommitInputDeferralFlushHandler;
+    }
+
+    clearDeferredDescriptionInput();
+}
+
+function handleDescriptionInputCapture(event) {
+    if (event[DEFERRED_DESCRIPTION_INPUT_KEY] || !shouldDeferDescriptionInput(event)) {
+        return;
+    }
+
+    event.stopImmediatePropagation();
+    scheduleDeferredDescriptionInput(event.target);
+}
+
+function shouldDeferDescriptionInput(event) {
+    if (!settings.imeCommitOptimizationEnabled || !isMobile() || event.isTrusted !== true) {
+        return false;
+    }
+
+    const textarea = event.target;
+
+    if (!isDescriptionTextarea(textarea)) {
+        return false;
+    }
+
+    if (String(textarea.value ?? '').length < DESCRIPTION_INPUT_DEFER_MIN_LENGTH) {
+        return false;
+    }
+
+    return !isLikelyDescriptionMacroContext(textarea);
+}
+
+function scheduleDeferredDescriptionInput(textarea) {
+    clearDeferredDescriptionInput();
+    extensionState.deferredDescriptionInputTarget = textarea;
+    extensionState.deferredDescriptionInputTimer = setTimeout(() => {
+        flushDeferredDescriptionInput(textarea);
+    }, DESCRIPTION_INPUT_DEFER_DELAY);
+}
+
+function clearDeferredDescriptionInput() {
+    if (extensionState.deferredDescriptionInputTimer) {
+        clearTimeout(extensionState.deferredDescriptionInputTimer);
+        delete extensionState.deferredDescriptionInputTimer;
+    }
+}
+
+function flushDeferredDescriptionInput(target = extensionState.deferredDescriptionInputTarget) {
+    if (!isDescriptionTextarea(target)) {
+        return;
+    }
+
+    clearDeferredDescriptionInput();
+    delete extensionState.deferredDescriptionInputTarget;
+
+    const deferredEvent = new Event('input', { bubbles: true });
+    Object.defineProperty(deferredEvent, DEFERRED_DESCRIPTION_INPUT_KEY, { value: true });
+    target.dispatchEvent(deferredEvent);
 }
 
 function patchAutoCompleteShowForImeCommit() {
@@ -1493,25 +1581,33 @@ function shouldSkipDescriptionAutoCompleteShow(autoComplete, isInput, isForced, 
 
     const textarea = autoComplete?.textarea;
 
-    if (!(textarea instanceof HTMLTextAreaElement) || !textarea.matches(DESCRIPTION_TEXTAREA_SELECTOR)) {
+    if (!isDescriptionTextarea(textarea)) {
         return false;
     }
 
+    return !isLikelyDescriptionMacroContext(textarea);
+}
+
+function isDescriptionTextarea(textarea) {
+    return textarea instanceof HTMLTextAreaElement && textarea.matches(DESCRIPTION_TEXTAREA_SELECTOR);
+}
+
+function isLikelyDescriptionMacroContext(textarea) {
     const cursorPosition = Number(textarea.selectionStart ?? 0);
     const text = String(textarea.value ?? '');
 
     if (cursorPosition >= 2 && text.slice(cursorPosition - 2, cursorPosition) === '{{') {
-        return false;
+        return true;
     }
 
     const beforeCursor = text.slice(Math.max(0, cursorPosition - 256), cursorPosition);
     const lastOpenMacro = beforeCursor.lastIndexOf('{{');
 
     if (lastOpenMacro !== -1 && beforeCursor.lastIndexOf('}}') < lastOpenMacro) {
-        return false;
+        return true;
     }
 
-    return true;
+    return false;
 }
 
 function patchAutoCompletePositioning() {

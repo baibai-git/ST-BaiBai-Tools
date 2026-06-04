@@ -10,7 +10,7 @@ What it does:
 - Speeds up opening and closing World Info entry editors by skipping the expensive height animation for top-level entry drawers, keeping initialized editors alive while collapsed, and lazily initializing heavier Select2 controls and character filter options
 - Speeds up OpenAI preset switching by letting the mobile preset select close first, rendering the prompt list immediately, suppressing the stock one-second delayed rebuild for that switch, and refreshing token counts afterward
 - Speeds up prompt preset toggles and saves by updating only the affected prompt row immediately, then refreshing token counts after a short debounce instead of rebuilding the whole prompt list on every click
-- Reduces mobile character description textarea lag by skipping inactive autocomplete cursor-position work during internal scrolling and normal IME candidate commits
+- Reduces mobile character description textarea lag by skipping inactive autocomplete cursor-position work during internal scrolling and deferring heavy follow-up handlers after normal IME candidate commits
 - Adds a SillyTavern extension settings panel with separate switches for the input responsiveness and chat file manager optimizations
 
 The chat file manager optimization only applies when:
