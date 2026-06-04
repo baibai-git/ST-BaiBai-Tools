@@ -10,7 +10,8 @@ What it does:
 - Speeds up opening and closing World Info entry editors by skipping the expensive height animation for top-level entry drawers, keeping initialized editors alive while collapsed, and lazily initializing heavier Select2 controls and character filter options
 - Speeds up OpenAI preset switching by letting the mobile preset select close first, rendering the prompt list immediately, suppressing the stock one-second delayed rebuild for that switch, and refreshing token counts afterward
 - Speeds up prompt preset toggles and saves by updating only the affected prompt row immediately, then refreshing token counts after a short debounce instead of rebuilding the whole prompt list on every click
-- Adds a SillyTavern extension settings panel with separate switches for the input responsiveness and chat file manager optimizations
+- Optionally saves the current OpenAI preset after a prompt entry edit is saved; this switch is off by default
+- Adds a SillyTavern extension settings panel with separate switches for the responsiveness, chat file manager, and prompt preset features
 
 The chat file manager optimization only applies when:
 
@@ -23,6 +24,8 @@ Keyword searches and group chats fall back to SillyTavern's original `/api/chats
 The prompt preset switch optimization only applies to the OpenAI/chat-completion prompt manager. It applies prompt list fields before the rest of the preset switch finishes so the list can repaint earlier. Its fast renderer uses indexed prompt lookups and delegated row actions to avoid repeated per-row searches and listener binding. When deleting the selected OpenAI preset, it selects the next preset in the list, or the first preset when deleting the last one. It preserves SillyTavern's original behavior when disabled.
 
 The prompt preset quick-operation optimization only applies to existing rows in the OpenAI/chat-completion prompt manager list. New prompt creation still falls back to SillyTavern's original behavior because it changes the available prompt list. The feature switch preserves SillyTavern's original behavior when disabled.
+
+The prompt entry auto-save feature is disabled by default. When enabled, saving an OpenAI prompt entry also triggers the current OpenAI preset save action after the prompt edit has been written.
 
 For local testing inside this repository, the extension can live under:
 

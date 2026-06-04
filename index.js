@@ -32,6 +32,7 @@ const CHAT_MANAGEMENT_POPUP_SELECTOR = '#shadow_select_chat_popup';
 const CHAT_MANAGEMENT_LIST_SELECTOR = '#select_chat_div';
 const OPENAI_PRESET_SELECT_SELECTOR = '#settings_preset_openai';
 const OPENAI_PRESET_DELETE_SELECTOR = '#delete_oai_preset';
+const OPENAI_PRESET_UPDATE_SELECTOR = '#update_oai_preset';
 const PRESET_PROMPT_MANAGER_LIST_SELECTOR = '#completion_prompt_manager_list';
 const PRESET_PROMPT_MANAGER_SAVE_SELECTOR = '#completion_prompt_manager_popup_entry_form_save';
 const WORLD_INFO_ENTRY_DRAWER_TOGGLE_SELECTOR = '#world_popup_entries_list > .world_entry > .world_entry_form > .inline-drawer > .inline-drawer-header .inline-drawer-toggle';
@@ -68,6 +69,7 @@ const defaultSettings = {
     presetScrollOptimizationEnabled: true,
     presetSwitchOptimizationEnabled: true,
     presetToggleOptimizationEnabled: true,
+    presetAutoSaveAfterPromptEditEnabled: false,
 };
 const legacySettingsKeys = [
     'imeCommitOptimizationEnabled',
@@ -235,6 +237,13 @@ async function renderSettingsPanel() {
             saveExtensionSettings();
             applyPresetToggleOptimization();
             applyPresetSaveOptimization();
+        });
+
+    $('#bai_bai_toolkit_preset_auto_save_after_prompt_edit_enabled')
+        .prop('checked', settings.presetAutoSaveAfterPromptEditEnabled)
+        .on('input', function () {
+            settings.presetAutoSaveAfterPromptEditEnabled = Boolean($(this).prop('checked'));
+            saveExtensionSettings();
         });
 }
 
@@ -1161,14 +1170,15 @@ function handlePresetPromptToggleClick(event) {
 }
 
 function handlePresetPromptSaveClick(event) {
-    if (!settings.presetToggleOptimizationEnabled) {
-        return;
-    }
-
     const target = event.target instanceof Element ? event.target : null;
     const saveButton = target?.closest(PRESET_PROMPT_MANAGER_SAVE_SELECTOR);
 
-    if (!saveButton || !promptManager || typeof promptManager.getPromptById !== 'function') {
+    if (!saveButton) {
+        return;
+    }
+
+    if (!settings.presetToggleOptimizationEnabled || !promptManager || typeof promptManager.getPromptById !== 'function') {
+        scheduleOpenAiPresetSaveAfterPromptEdit();
         return;
     }
 
@@ -1176,6 +1186,7 @@ function handlePresetPromptSaveClick(event) {
     const prompt = promptId ? promptManager.getPromptById(promptId) : null;
 
     if (!prompt || typeof promptManager.updatePromptWithPromptEditForm !== 'function') {
+        scheduleOpenAiPresetSaveAfterPromptEdit();
         return;
     }
 
@@ -1189,11 +1200,35 @@ function handlePresetPromptSaveClick(event) {
     promptManager.hidePopup?.();
     promptManager.clearEditForm?.();
 
-    void Promise.resolve(promptManager.saveServiceSettings?.()).catch(error => {
-        console.debug(`${LOG_PREFIX} Failed to save prompt edits`, error);
-    });
+    void Promise.resolve(promptManager.saveServiceSettings?.())
+        .then(saveOpenAiPresetAfterPromptEdit)
+        .catch(error => {
+            console.debug(`${LOG_PREFIX} Failed to save prompt edits`, error);
+        });
 
     refreshPromptManagerTokensDebounced();
+}
+
+function scheduleOpenAiPresetSaveAfterPromptEdit() {
+    if (!settings.presetAutoSaveAfterPromptEditEnabled) {
+        return;
+    }
+
+    setTimeout(() => {
+        void Promise.resolve(promptManager?.saveServiceSettings?.())
+            .then(saveOpenAiPresetAfterPromptEdit)
+            .catch(error => {
+                console.debug(`${LOG_PREFIX} Failed to prepare prompt edit preset save`, error);
+            });
+    }, 0);
+}
+
+function saveOpenAiPresetAfterPromptEdit() {
+    if (!settings.presetAutoSaveAfterPromptEditEnabled) {
+        return;
+    }
+
+    $(OPENAI_PRESET_UPDATE_SELECTOR).trigger('click');
 }
 
 function updatePromptToggleRow(row, toggle, isEnabled) {
