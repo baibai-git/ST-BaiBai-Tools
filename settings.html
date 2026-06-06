@@ -1,123 +1,205 @@
 <div class="bai_bai_toolkit_settings">
     <div class="inline-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>柏宝箱<small class="bai_bai_toolkit_update_badge" style="display: none; color: var(--SmartThemeBodyColor); background: var(--SmartThemeQuoteColor); border-radius: 4px; padding: 2px 4px; margin-left: 4px; font-size: 0.8em;">new</small></b>
+            <b>柏宝箱<small class="bai_bai_toolkit_update_badge"
+                    style="display: none; color: var(--SmartThemeBodyColor); background: var(--SmartThemeQuoteColor); border-radius: 4px; padding: 2px 4px; margin-left: 4px; font-size: 0.8em;">new</small></b>
             <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
         </div>
-        <div class="inline-drawer-content">
-            <div class="flex-container flexFlowColumn">
-                <div class="bai_bai_toolkit_version_info flex-container justifySpaceBetween alignItemCenter" style="margin-bottom: 10px; padding: 0 5px;">
-                    <span style="opacity: 0.7;">当前版本: <span class="bai_bai_toolkit_current_version"></span></span>
+        <div class="inline-drawer-content" style="padding-top: 5px;">
+            <div class="flex-container flexFlowColumn" style="gap: 5px;">
+                <div class="bai_bai_toolkit_version_info flex-container justifySpaceBetween alignItemCenter"
+                    style="margin-bottom: 5px; padding: 0 5px;">
+                    <div class="flex-container alignItemCenter flexGap5" style="opacity: 0.8; font-size: 0.9em;">
+                        <span>v<span class="bai_bai_toolkit_current_version"></span></span>
+                        <span style="opacity: 0.5;">|</span>
+                        <span>by 柏柏</span>
+                    </div>
                     <div class="bai_bai_toolkit_update_container flex-container alignItemCenter">
                         <span class="bai_bai_toolkit_update_status" style="margin-right: 10px; opacity: 0.7;"></span>
-                        <div class="menu_button menu_button_icon bai_bai_toolkit_update_button" style="display: none;" title="更新扩展">
+                        <div class="menu_button menu_button_icon bai_bai_toolkit_update_button" style="display: none;"
+                            title="更新扩展">
                             <i class="fa-solid fa-download"></i>
                             <span>更新</span>
                         </div>
                     </div>
                 </div>
-                <label class="checkbox_label" for="bai_bai_toolkit_resize_guard_enabled" title="减少输入框和自动补全在窗口尺寸变化时的重复布局计算。">
-                    <input id="bai_bai_toolkit_resize_guard_enabled" type="checkbox" class="checkbox">
-                    <span>输入框响应优化</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_description_codemirror_editor_enabled" title="使用 CodeMirror 6 替代原生 textarea 编辑角色描述；加载失败时直接恢复 ST 原版输入框。">
-                    <input id="bai_bai_toolkit_description_codemirror_editor_enabled" type="checkbox" class="checkbox">
-                    <span>角色描述 CodeMirror 编辑器</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_custom_css_input_optimization_enabled" title="编辑用户设置里的自定义 CSS 时，使用 CodeMirror 接管可见编辑器，并在离开编辑框后再应用整段样式。">
-                    <input id="bai_bai_toolkit_custom_css_input_optimization_enabled" type="checkbox" class="checkbox">
-                    <span>自定义CSS CodeMirror 编辑器</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_custom_css_shadow_property_enabled" title="拦截原生自定义CSS的写入操作并将其移入JS内存，从物理层面消除原生输入框被写入长文本时引发的浏览器排版与绘制卡顿，完美解决切换主题或同步主题时的严重卡顿。开启此项会自动开启自定义CSS的 CodeMirror 编辑器。">
-                    <input id="bai_bai_toolkit_custom_css_shadow_property_enabled" type="checkbox" class="checkbox">
-                    <span>切换美化优化</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_world_info_drawer_optimization_enabled" title="世界书条目展开/收起时跳过高度动画，保留已初始化的编辑区，并延迟初始化部分较重的下拉控件和角色过滤选项。">
-                    <input id="bai_bai_toolkit_world_info_drawer_optimization_enabled" type="checkbox" class="checkbox">
-                    <span>世界书条目快速展开</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_fast_chat_list_enabled" title="普通角色空搜索时，先显示轻量聊天文件列表，再补齐详细信息。">
-                    <input id="bai_bai_toolkit_fast_chat_list_enabled" type="checkbox" class="checkbox">
-                    <span>管理聊天文件请求加速</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_welcome_recent_chat_direct_open_enabled" title="从欢迎页最近聊天进入普通角色聊天时，直接打开目标聊天文件，避免先渲染角色上一次聊天。">
-                    <input id="bai_bai_toolkit_welcome_recent_chat_direct_open_enabled" type="checkbox" class="checkbox">
-                    <span>主页进入聊天优化</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_save_request_gzip_enabled" title="仅对公网访问的聊天保存接口请求体启用 Gzip 压缩；本地和局域网 IP 会自动跳过。">
-                    <input id="bai_bai_toolkit_save_request_gzip_enabled" type="checkbox" class="checkbox">
-                    <span>聊天保存请求 Gzip 压缩</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_translate_message_updated_optimization_enabled" title="自动翻译关闭且消息没有翻译缓存时，跳过翻译扩展在消息更新事件里的无效处理，避免长聊天反复全量保存。">
-                    <input id="bai_bai_toolkit_translate_message_updated_optimization_enabled" type="checkbox" class="checkbox">
-                    <span>翻译更新事件保存优化</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_long_chat_dom_render_optimization_enabled" title="长聊天进入后自动滚到底部，并在当前聊天 DOM 文本量较大时为楼层启用 content-visibility 和缓存占位高度，减少屏幕外楼层重排绘制。">
-                    <input id="bai_bai_toolkit_long_chat_dom_render_optimization_enabled" type="checkbox" class="checkbox">
-                    <span>长聊天 DOM 渲染优化</span>
-                </label>
-                <div class="bai_bai_toolkit_perf_trace flex-container flexFlowColumn" hidden aria-hidden="true" style="display: none !important; gap: 6px; padding: 6px 5px;">
-                    <div class="flex-container alignItemCenter flexGap5">
-                        <span style="opacity: 0.8;">Performance trace</span>
-                        <div id="bai_bai_toolkit_perf_trace_start" class="menu_button menu_button_icon" title="Start recording filtered performance diagnostics.">
-                            <i class="fa-solid fa-circle-play"></i>
-                            <span>Start</span>
-                        </div>
-                        <div id="bai_bai_toolkit_perf_trace_stop" class="menu_button menu_button_icon disabled" title="Stop recording and export a txt diagnostics file.">
-                            <i class="fa-solid fa-file-export"></i>
-                            <span>Stop &amp; Export TXT</span>
-                        </div>
+
+                <!-- 导航栏 -->
+                <div class="bai_bai_toolkit_tabs flex-container" style="border-bottom: 1px solid var(--SmartThemeBorderColor); gap: 4px; margin-bottom: 10px; margin-top: 5px;">
+                    <div class="bai_bai_toolkit_tab active" data-target="bai_bai_toolkit_tab_optimizations" style="flex: 1; text-align: center; color: var(--SmartThemeQuoteColor); border-bottom: 2px solid var(--SmartThemeQuoteColor); padding: 8px 12px; cursor: pointer; opacity: 1; transition: all 0.2s ease;">
+                        <i class="fa-solid fa-rocket"></i> 优化
                     </div>
-                    <small id="bai_bai_toolkit_perf_trace_status" style="opacity: 0.7;">idle</small>
+                    <div class="bai_bai_toolkit_tab" data-target="bai_bai_toolkit_tab_features" style="flex: 1; text-align: center; border-bottom: 2px solid transparent; padding: 8px 12px; cursor: pointer; opacity: 0.6; transition: all 0.2s ease;">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> 功能
+                    </div>
                 </div>
-                <label class="checkbox_label" for="bai_bai_toolkit_chat_list_scroll_optimization_enabled" title="减少管理聊天文件列表屏幕外条目的布局和绘制，缓解大量聊天文件时的滚动卡顿。">
-                    <input id="bai_bai_toolkit_chat_list_scroll_optimization_enabled" type="checkbox" class="checkbox">
-                    <span>管理聊天文件滚动优化</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_chat_list_auto_clear_enabled" title="管理聊天文件窗口关闭后，清空已生成的聊天文件列表元素，减少关闭后的 DOM 占用。">
-                    <input id="bai_bai_toolkit_chat_list_auto_clear_enabled" type="checkbox" class="checkbox">
-                    <span>管理聊天文件关闭清理</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_mobile_auto_keyboard_suppression_enabled" title="手机端打开楼层编辑框、管理聊天文件窗口或进入角色聊天时，拦截程序自动聚焦，避免输入法自动弹出；手动点击输入框仍可输入。">
-                    <input id="bai_bai_toolkit_mobile_auto_keyboard_suppression_enabled" type="checkbox" class="checkbox">
-                    <span>禁止输入法自动弹出</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_mobile_message_edit_scroll_guard_enabled" title="手机端编辑楼层时，抑制键盘挤压布局触发的聊天区自动滚动补偿，避免编辑楼层被顶走。">
-                    <input id="bai_bai_toolkit_mobile_message_edit_scroll_guard_enabled" type="checkbox" class="checkbox">
-                    <span>编辑楼层时禁用自动滚动</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_chat_delete_edit_flow_optimization_enabled" title="用删除消息模式删楼后，允许上一层编辑区立即打开；发送、继续、冒充或重新生成前会先提交当前消息编辑。">
-                    <input id="bai_bai_toolkit_chat_delete_edit_flow_optimization_enabled" type="checkbox" class="checkbox">
-                    <span>删楼后快速编辑</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_preset_scroll_optimization_enabled" title="对预设界面列表条目启用安全的绘制隔离，减少部分重绘开销。">
-                    <input id="bai_bai_toolkit_preset_scroll_optimization_enabled" type="checkbox" class="checkbox">
-                    <span>预设界面滚动优化</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_preset_drag_optimization_enabled" title="拖拽预设条目时不实时挤开周围条目，只显示插入线，松手后才重排并保存。手机端使用长按拖拽，滑动会取消拖拽以避免误触。">
-                    <input id="bai_bai_toolkit_preset_drag_optimization_enabled" type="checkbox" class="checkbox">
-                    <span>预设条目拖拽优化</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_preset_mobile_whole_row_drag_enabled" title="开启后，手机端可长按预设条目任意非按钮区域拖拽；关闭后，手机端只能长按左侧拖拽手柄。">
-                    <input id="bai_bai_toolkit_preset_mobile_whole_row_drag_enabled" type="checkbox" class="checkbox">
-                    <span>手机预设条目整条拖拽</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_preset_switch_optimization_enabled" title="切换 OpenAI 预设后立即刷新预设条目列表，并在列表显示后再异步刷新 Token 统计。手机端会先收起预设下拉框，再继续执行切换逻辑。删除当前预设后会优先选中下一项。">
-                    <input id="bai_bai_toolkit_preset_switch_optimization_enabled" type="checkbox" class="checkbox">
-                    <span>切换预设快速刷新</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_preset_toggle_optimization_enabled" title="切换或保存已有预设条目时只更新当前条目，并延迟刷新 Token 统计，避免整份预设列表立即重建。">
-                    <input id="bai_bai_toolkit_preset_toggle_optimization_enabled" type="checkbox" class="checkbox">
-                    <span>预设快速操作</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_preset_prompt_codemirror_editor_enabled" title="使用 CodeMirror 替代预设条目 prompt 原生 textarea，并在保存前同步回 SillyTavern 原表单。">
-                    <input id="bai_bai_toolkit_preset_prompt_codemirror_editor_enabled" type="checkbox" class="checkbox">
-                    <span>预设内容 CodeMirror 编辑器</span>
-                </label>
-                <label class="checkbox_label" for="bai_bai_toolkit_preset_auto_save_after_prompt_edit_enabled" title="保存 OpenAI 预设条目编辑后，自动点击当前预设的保存按钮。默认关闭。">
-                    <input id="bai_bai_toolkit_preset_auto_save_after_prompt_edit_enabled" type="checkbox" class="checkbox">
-                    <span>保存条目后自动保存预设</span>
-                </label>
+
+                <!-- 性能优化 (Optimizations) - 默认显示 -->
+                <div id="bai_bai_toolkit_tab_optimizations" class="bai_bai_toolkit_tab_content">
+                    <!-- 1. 聊天优化 -->
+                    <fieldset style="border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 8px; margin-bottom: 10px;">
+                        <legend style="font-size: 0.9em; font-weight: bold; opacity: 0.8;"><i class="fa-solid fa-comments"></i> 聊天优化</legend>
+                        <div class="flex-container flexFlowColumn" style="gap: 5px;">
+                            <label class="checkbox_label" for="bai_bai_toolkit_welcome_recent_chat_direct_open_enabled"
+                                title="从欢迎页最近聊天进入普通角色聊天时，直接打开目标聊天文件，避免先渲染角色上一次聊天。">
+                                <input id="bai_bai_toolkit_welcome_recent_chat_direct_open_enabled" type="checkbox"
+                                    class="checkbox">
+                                <span>主页进入聊天优化</span>
+                            </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_long_chat_dom_render_optimization_enabled"
+                                title="长聊天进入后自动滚到底部，并在当前聊天 DOM 文本量较大时为楼层启用 content-visibility 和缓存占位高度，减少屏幕外楼层重排绘制。">
+                                <input id="bai_bai_toolkit_long_chat_dom_render_optimization_enabled" type="checkbox"
+                                    class="checkbox">
+                                <span>长聊天 DOM 渲染优化</span>
+                            </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_fast_chat_list_enabled"
+                                title="普通角色空搜索时，先显示轻量聊天文件列表，再补齐详细信息。">
+                                <input id="bai_bai_toolkit_fast_chat_list_enabled" type="checkbox" class="checkbox">
+                                <span>管理聊天文件请求加速</span>
+                            </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_chat_list_scroll_optimization_enabled"
+                                title="减少管理聊天文件列表屏幕外条目的布局和绘制，缓解大量聊天文件时的滚动卡顿。">
+                                <input id="bai_bai_toolkit_chat_list_scroll_optimization_enabled" type="checkbox" class="checkbox">
+                                <span>管理聊天文件滚动优化</span>
+                            </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_chat_list_auto_clear_enabled"
+                                title="管理聊天文件窗口关闭后，清空已生成的聊天文件列表元素，减少关闭后的 DOM 占用。">
+                                <input id="bai_bai_toolkit_chat_list_auto_clear_enabled" type="checkbox" class="checkbox">
+                                <span>管理聊天文件关闭清理</span>
+                            </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_chat_delete_edit_flow_optimization_enabled"
+                                title="用删除消息模式删楼后，允许上一层编辑区立即打开；发送、继续、冒充或重新生成前会先提交当前消息编辑。">
+                                <input id="bai_bai_toolkit_chat_delete_edit_flow_optimization_enabled" type="checkbox"
+                                    class="checkbox">
+                                <span>删楼后快速编辑</span>
+                            </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_translate_message_updated_optimization_enabled"
+                                title="自动翻译关闭且消息没有翻译缓存时，跳过翻译扩展在消息更新事件里的无效处理，避免长聊天反复全量保存。">
+                                <input id="bai_bai_toolkit_translate_message_updated_optimization_enabled" type="checkbox"
+                                    class="checkbox">
+                                <span>翻译更新事件保存优化</span>
+                            </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_resize_guard_enabled"
+                                title="减少输入框和自动补全在窗口尺寸变化时的重复布局计算。">
+                                <input id="bai_bai_toolkit_resize_guard_enabled" type="checkbox" class="checkbox">
+                                <span>输入框响应优化</span>
+                            </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_mobile_auto_keyboard_suppression_enabled"
+                                title="手机端打开楼层编辑框、管理聊天文件窗口或进入角色聊天时，拦截程序自动聚焦，避免输入法自动弹出；手动点击输入框仍可输入。">
+                                <input id="bai_bai_toolkit_mobile_auto_keyboard_suppression_enabled" type="checkbox"
+                                    class="checkbox">
+                                <span>禁止输入法自动弹出</span>
+                            </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_mobile_message_edit_scroll_guard_enabled"
+                                title="手机端编辑楼层时，抑制键盘挤压布局触发的聊天区自动滚动补偿，避免编辑楼层被顶走。">
+                                <input id="bai_bai_toolkit_mobile_message_edit_scroll_guard_enabled" type="checkbox"
+                                    class="checkbox">
+                                <span>编辑楼层时禁用自动滚动</span>
+                            </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_save_request_gzip_enabled"
+                                title="仅对公网访问的聊天保存接口请求体启用 Gzip 压缩；本地和局域网 IP 会自动跳过。">
+                                <input id="bai_bai_toolkit_save_request_gzip_enabled" type="checkbox" class="checkbox">
+                                <span>聊天保存请求 Gzip 压缩</span>
+                            </label>
+                        </div>
+                    </fieldset>
+
+                    <!-- 2. 预设优化 -->
+                    <fieldset style="border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 8px; margin-bottom: 10px;">
+                        <legend style="font-size: 0.9em; font-weight: bold; opacity: 0.8;"><i class="fa-solid fa-sliders"></i> 预设优化</legend>
+                        <div class="flex-container flexFlowColumn" style="gap: 5px;">
+                            <label class="checkbox_label" for="bai_bai_toolkit_preset_prompt_codemirror_editor_enabled"
+                                title="使用 CodeMirror 替代预设条目 prompt 原生 textarea，并在保存前同步回 SillyTavern 原表单。">
+                                <input id="bai_bai_toolkit_preset_prompt_codemirror_editor_enabled" type="checkbox"
+                                    class="checkbox">
+                                <span>预设内容 CodeMirror 编辑器</span>
+                            </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_preset_scroll_optimization_enabled"
+                                title="对预设界面列表条目启用安全的绘制隔离，减少部分重绘开销。">
+                                <input id="bai_bai_toolkit_preset_scroll_optimization_enabled" type="checkbox" class="checkbox">
+                                <span>预设界面滚动优化</span>
+                            </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_preset_drag_optimization_enabled"
+                                title="拖拽预设条目时不实时挤开周围条目，只显示插入线，松手后才重排并保存。手机端使用长按拖拽，滑动会取消拖拽以避免误触。">
+                                <input id="bai_bai_toolkit_preset_drag_optimization_enabled" type="checkbox" class="checkbox">
+                                <span>预设条目拖拽优化</span>
+                            </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_preset_mobile_whole_row_drag_enabled"
+                                title="开启后，手机端可长按预设条目任意非按钮区域拖拽；关闭后，手机端只能长按左侧拖拽手柄。">
+                                <input id="bai_bai_toolkit_preset_mobile_whole_row_drag_enabled" type="checkbox" class="checkbox">
+                                <span>手机预设条目整条拖拽</span>
+                            </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_preset_switch_optimization_enabled"
+                                title="切换 OpenAI 预设后立即刷新预设条目列表，并在列表显示后再异步刷新 Token 统计。手机端会先收起预设下拉框，再继续执行切换逻辑。删除当前预设后会优先选中下一项。">
+                                <input id="bai_bai_toolkit_preset_switch_optimization_enabled" type="checkbox" class="checkbox">
+                                <span>切换预设快速刷新</span>
+                            </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_preset_toggle_optimization_enabled"
+                                title="切换或保存已有预设条目时只更新当前条目，并延迟刷新 Token 统计，避免整份预设列表立即重建。">
+                                <input id="bai_bai_toolkit_preset_toggle_optimization_enabled" type="checkbox" class="checkbox">
+                                <span>预设快速操作</span>
+                            </label>
+                        </div>
+                    </fieldset>
+
+                    <!-- 3. 其他优化 -->
+                    <fieldset style="border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 8px; margin-bottom: 10px;">
+                        <legend style="font-size: 0.9em; font-weight: bold; opacity: 0.8;"><i class="fa-solid fa-desktop"></i> 其他优化</legend>
+                        <div class="flex-container flexFlowColumn" style="gap: 5px;">
+                            <label class="checkbox_label" for="bai_bai_toolkit_description_codemirror_editor_enabled"
+                                title="使用 CodeMirror 6 替代原生 textarea 编辑角色描述；加载失败时直接恢复 ST 原版输入框。">
+                                <input id="bai_bai_toolkit_description_codemirror_editor_enabled" type="checkbox" class="checkbox">
+                                <span>角色描述 CodeMirror 编辑器</span>
+                            </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_custom_css_input_optimization_enabled"
+                                title="编辑用户设置里的自定义 CSS 时，使用 CodeMirror 接管可见编辑器，并在离开编辑框后再应用整段样式。">
+                                <input id="bai_bai_toolkit_custom_css_input_optimization_enabled" type="checkbox" class="checkbox">
+                                <span>自定义CSS CodeMirror 编辑器</span>
+                            </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_custom_css_shadow_property_enabled"
+                                title="拦截原生自定义CSS的写入操作并将其移入JS内存，从物理层面消除原生输入框被写入长文本时引发的浏览器排版与绘制卡顿，完美解决切换主题或同步主题时的严重卡顿。开启此项会自动开启自定义CSS的 CodeMirror 编辑器。">
+                                <input id="bai_bai_toolkit_custom_css_shadow_property_enabled" type="checkbox" class="checkbox">
+                                <span>切换美化优化</span>
+                            </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_world_info_drawer_optimization_enabled"
+                                title="世界书条目展开/收起时跳过高度动画，保留已初始化的编辑区，并延迟初始化部分较重的下拉控件和角色过滤选项。">
+                                <input id="bai_bai_toolkit_world_info_drawer_optimization_enabled" type="checkbox" class="checkbox">
+                                <span>世界书条目快速展开</span>
+                            </label>
+
+                            <div class="bai_bai_toolkit_perf_trace flex-container flexFlowColumn" style="display: none !important;"
+                                aria-hidden="true" style="gap: 6px; padding: 6px 5px;">
+                                <div class="flex-container alignItemCenter flexGap5">
+                                    <span style="opacity: 0.8;">Performance trace</span>
+                                    <div id="bai_bai_toolkit_perf_trace_start" class="menu_button menu_button_icon"
+                                        title="Start recording filtered performance diagnostics.">
+                                        <i class="fa-solid fa-circle-play"></i>
+                                        <span>Start</span>
+                                    </div>
+                                    <div id="bai_bai_toolkit_perf_trace_stop" class="menu_button menu_button_icon disabled"
+                                        title="Stop recording and export a txt diagnostics file.">
+                                        <i class="fa-solid fa-file-export"></i>
+                                        <span>Stop &amp; Export TXT</span>
+                                    </div>
+                                </div>
+                                <small id="bai_bai_toolkit_perf_trace_status" style="opacity: 0.7;">idle</small>
+                            </div>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <!-- 附加功能 (Features) - 默认隐藏 -->
+                <div id="bai_bai_toolkit_tab_features" class="bai_bai_toolkit_tab_content" style="display: none; padding-top: 5px;">
+                    <div class="flex-container flexFlowColumn" style="gap: 5px;">
+                        <label class="checkbox_label" for="bai_bai_toolkit_preset_auto_save_after_prompt_edit_enabled"
+                            title="保存 OpenAI 预设条目编辑后，自动点击当前预设的保存按钮。默认关闭。">
+                            <input id="bai_bai_toolkit_preset_auto_save_after_prompt_edit_enabled" type="checkbox"
+                                class="checkbox">
+                            <span>保存条目后自动保存预设</span>
+                        </label>
+                    </div>
+                </div>
+
             </div>
         </div>
     </div>

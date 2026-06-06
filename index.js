@@ -126,6 +126,7 @@ const DESCRIPTION_CODEMIRROR_CDN_MODULES = {
     highlight: 'https://esm.sh/@lezer/highlight@1?bundle',
     oneDark: 'https://esm.sh/@codemirror/theme-one-dark@6?bundle',
 };
+
 const createOrEditCharacter = scriptModule.createOrEditCharacter;
 const messageEdit = scriptModule.messageEdit;
 const COMPATIBILITY_MODE_BADGE_TEXT = '（兼容模式）';
@@ -1777,6 +1778,33 @@ async function renderSettingsPanel() {
     container.empty().append(template);
 
     // 初始化版本信息和更新逻辑
+
+    // Initialize tabs
+    const tabs = container.find('.bai_bai_toolkit_tab');
+    const tabContents = container.find('.bai_bai_toolkit_tab_content');
+
+    tabs.on('click', function () {
+        const tab = $(this);
+        const targetId = tab.data('target');
+
+        // Update active class on tabs
+        tabs.removeClass('active').css({
+            'color': '',
+            'border-bottom': '2px solid transparent',
+            'opacity': '0.6'
+        });
+
+        tab.addClass('active').css({
+            'color': 'var(--SmartThemeQuoteColor)',
+            'border-bottom': '2px solid var(--SmartThemeQuoteColor)',
+            'opacity': '1'
+        });
+
+        // Show/hide contents
+        tabContents.hide();
+        container.find(`#${targetId}`).show();
+    });
+
     initializeUpdateUI(container);
 
     $('#bai_bai_toolkit_resize_guard_enabled')
@@ -2113,7 +2141,7 @@ async function initializeUpdateUI(container) {
     }
 
     // 绑定更新按钮点击事件
-    updateButton.on('click', async function() {
+    updateButton.on('click', async function () {
         if ($(this).hasClass('disabled')) return;
 
         await promptForExtensionUpdate($(this));
@@ -2917,10 +2945,10 @@ function installCustomCssShadowPropertyOptimization() {
     extensionState.customCssOriginalValueDescriptor = originalDescriptor;
 
     Object.defineProperty(input, 'value', {
-        get: function() {
+        get: function () {
             return virtualValue;
         },
-        set: function(newValue) {
+        set: function (newValue) {
             virtualValue = String(newValue);
             // Intentionally DO NOT call original setter to prevent DOM rendering
         },
@@ -4216,6 +4244,9 @@ function applyMobileAutoKeyboardSuppression() {
     const directFocusIntentHandler = (event) => {
         markMobileAutoKeyboardDirectFocusIntent(event);
     };
+    const pointerUpHandler = (event) => {
+        handleMobileAutoKeyboardPointerUp(event);
+    };
     const focusInHandler = (event) => {
         handleMobileAutoKeyboardFocusIn(event);
     };
@@ -4225,6 +4256,7 @@ function applyMobileAutoKeyboardSuppression() {
 
     extensionState[MOBILE_AUTO_KEYBOARD_HANDLER_KEY] = {
         directFocusIntentHandler,
+        pointerUpHandler,
         focusInHandler,
         pageLifecycleHandler,
     };
@@ -4232,6 +4264,9 @@ function applyMobileAutoKeyboardSuppression() {
     document.addEventListener('pointerdown', directFocusIntentHandler, true);
     document.addEventListener('mousedown', directFocusIntentHandler, true);
     document.addEventListener('touchstart', directFocusIntentHandler, true);
+    document.addEventListener('pointerup', pointerUpHandler, true);
+    document.addEventListener('touchend', pointerUpHandler, true);
+    document.addEventListener('mouseup', pointerUpHandler, true);
     document.addEventListener('focusin', focusInHandler, true);
     document.addEventListener('visibilitychange', pageLifecycleHandler, true);
     window.addEventListener('pagehide', pageLifecycleHandler, true);
@@ -4661,7 +4696,7 @@ function getActiveMobileMessageEditScrollGuard() {
 }
 
 function isMobileMessageEditScrollGuardEnabled() {
-    return Boolean(settings.mobileMessageEditScrollGuardEnabled && isMobile());
+    return Boolean(settings.mobileMessageEditScrollGuardEnabled);
 }
 
 function patchMobileAutoKeyboardFocus() {
@@ -4698,6 +4733,11 @@ function patchMobileAutoKeyboardJQueryFocus() {
                 return this;
             }
 
+            // PC Auto-Scroll Guard: Inject {preventScroll: true} for `#curEditTextarea` on PC or Mobile
+            if (this.length > 0 && this[0].id === 'curEditTextarea' && isMobileMessageEditScrollGuardEnabled()) {
+                args = [{ preventScroll: true }];
+            }
+
             return originalFocus.apply(this, args);
         }
 
@@ -4723,10 +4763,6 @@ function patchMobileAutoKeyboardJQueryFocus() {
 }
 
 function markMobileAutoKeyboardDirectFocusIntent(event) {
-    if (!isMobile()) {
-        return;
-    }
-
     const keyboardTarget = event.target instanceof Element
         ? event.target.closest(MOBILE_DIRECT_KEYBOARD_TARGET_SELECTOR)
         : null;
@@ -4736,15 +4772,53 @@ function markMobileAutoKeyboardDirectFocusIntent(event) {
 
     if (isMobileMessageEditScrollGuardEnabled() && editTarget instanceof HTMLElement) {
         captureMobileMessageEditScrollGuard('direct edit focus intent', editTarget, { force: true });
+
+        // Record coordinates to distinguish between scroll and click
+        const touch = event.touches?.[0] || event;
+        extensionState.mobileAutoKeyboardTouchStartX = touch.clientX;
+        extensionState.mobileAutoKeyboardTouchStartY = touch.clientY;
+    }
+
+    if (!isMobile()) {
+        return;
     }
 
     if (keyboardTarget instanceof HTMLElement && shouldTrackMobileAutoKeyboardDirectFocusIntent(keyboardTarget)) {
         extensionState.mobileAutoKeyboardDirectFocusTarget = keyboardTarget;
         extensionState.mobileAutoKeyboardDirectFocusAt = Date.now();
     }
+}
 
-    if (isMobileMessageEditScrollGuardEnabled() && editTarget instanceof HTMLElement) {
-        focusMobileMessageEditWithoutScroll(event, editTarget);
+function handleMobileAutoKeyboardPointerUp(event) {
+    if (!isMobileMessageEditScrollGuardEnabled()) {
+        return;
+    }
+
+    const editTarget = event.target instanceof Element
+        ? event.target.closest(MOBILE_MESSAGE_EDIT_SELECTOR)
+        : null;
+
+    if (editTarget instanceof HTMLElement) {
+        // Only focus if the pointer didn't move significantly (it was a click, not a swipe)
+        let isSwipe = false;
+
+        if (event.type === 'touchend' && typeof extensionState.mobileAutoKeyboardTouchStartX === 'number') {
+            const touch = event.changedTouches?.[0] || event;
+            const deltaX = Math.abs(touch.clientX - extensionState.mobileAutoKeyboardTouchStartX);
+            const deltaY = Math.abs(touch.clientY - extensionState.mobileAutoKeyboardTouchStartY);
+
+            // If moved more than 10 pixels, consider it a swipe
+            if (deltaX > 10 || deltaY > 10) {
+                isSwipe = true;
+            }
+        }
+
+        extensionState.mobileAutoKeyboardTouchStartX = null;
+        extensionState.mobileAutoKeyboardTouchStartY = null;
+
+        if (!isSwipe) {
+            focusMobileMessageEditWithoutScroll(event, editTarget);
+        }
     }
 }
 
@@ -6898,7 +6972,7 @@ function suppressPromptManagerDebouncedRenderForCurrentTick() {
         return;
     }
 
-    const suppressedRenderDebounced = () => {};
+    const suppressedRenderDebounced = () => { };
     suppressedRenderDebounced.__baiBaiToolkitPresetSwitchSuppressed = true;
     suppressedRenderDebounced.__baiBaiToolkitOriginalRenderDebounced = originalRenderDebounced;
     promptManager.renderDebounced = suppressedRenderDebounced;
