@@ -146,6 +146,11 @@
                     <fieldset style="border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 8px; margin-bottom: 10px;">
                         <legend style="font-size: 0.9em; font-weight: bold; opacity: 0.8;"><i class="fa-solid fa-desktop"></i> 其他优化</legend>
                         <div class="flex-container flexFlowColumn" style="gap: 5px;">
+                            <label class="checkbox_label" for="bai_bai_toolkit_regex_quick_operation_enabled"
+                                title="启用后，正则条目的单条启用/禁用、编辑保存、删除和拖拽排序只更新对应 DOM，不立即重建整份正则列表。">
+                                <input id="bai_bai_toolkit_regex_quick_operation_enabled" type="checkbox" class="checkbox">
+                                <span>正则快速操作</span>
+                            </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_description_codemirror_editor_enabled"
                                 title="使用 CodeMirror 6 替代原生 textarea 编辑角色描述；加载失败时直接恢复 ST 原版输入框。">
                                 <input id="bai_bai_toolkit_description_codemirror_editor_enabled" type="checkbox" class="checkbox">

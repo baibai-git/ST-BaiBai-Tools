@@ -21,10 +21,12 @@ import { isMobile, favsToHotswap } from '../../../RossAscends-mods.js';
 import { power_user } from '../../../power-user.js';
 import { renderTemplateAsync } from '../../../templates.js';
 import { isAdmin } from '../../../user.js';
-import { debounce, escapeHtml, resetScrollHeight, timestampToMoment } from '../../../utils.js';
+import { debounce, escapeHtml, regexFromString, resetScrollHeight, setInfoBlock, timestampToMoment } from '../../../utils.js';
+import { allowPresetScripts as allowRegexPresetScripts, allowScopedScripts as allowRegexScopedScripts, getCurrentPresetAPI as getRegexCurrentPresetAPI, getCurrentPresetName as getRegexCurrentPresetName, getScriptsByType as getRegexScriptsByType, runRegexScript, saveScriptsByType as saveRegexScriptsByType, SCRIPT_TYPES as REGEX_SCRIPT_TYPES, substitute_find_regex } from '../../regex/engine.js';
 
 const LOG_PREFIX = '[柏宝箱]';
 const MODULE_NAME = getModuleName();
+const CURRENT_VERSION = '0.22.0';
 const EXTENSION_ID = getExtensionId();
 const SETTINGS_KEY = 'baiBaiToolkit';
 const EXTENSION_KEY = '__baiBaiToolkitExtensionInstalled';
@@ -53,6 +55,8 @@ const PRESET_DELETE_HANDLER_KEY = '__baiBaiToolkitPresetDeleteHandler';
 const PRESET_LIST_ACTION_HANDLER_KEY = '__baiBaiToolkitPresetListActionHandler';
 const PRESET_TOGGLE_HANDLER_KEY = '__baiBaiToolkitPresetToggleHandler';
 const PRESET_SAVE_HANDLER_KEY = '__baiBaiToolkitPresetSaveHandler';
+const REGEX_QUICK_OPERATION_HANDLER_KEY = '__baiBaiToolkitRegexQuickOperationHandler';
+const REGEX_QUICK_OPERATION_OBSERVER_KEY = '__baiBaiToolkitRegexQuickOperationObserver';
 const CHAT_DELETE_EDIT_HANDLER_KEY = '__baiBaiToolkitChatDeleteEditHandler';
 const CHAT_DELETE_MESSAGE_DELETED_HANDLER_KEY = '__baiBaiToolkitChatDeleteMessageDeletedHandler';
 const CHAT_DELETE_GENERATION_ACTION_HANDLER_KEY = '__baiBaiToolkitChatDeleteGenerationActionHandler';
@@ -157,6 +161,9 @@ const PRESET_DRAG_ACTIVE_CLASS = 'bai-bai-toolkit-preset-drag-active';
 const PRESET_DRAG_SOURCE_CLASS = 'bai-bai-toolkit-preset-drag-source';
 const PRESET_DRAG_CLONE_CLASS = 'bai-bai-toolkit-preset-drag-clone';
 const PRESET_DRAG_INDICATOR_CLASS = 'bai-bai-toolkit-preset-drag-indicator';
+const REGEX_CONTAINER_SELECTOR = '#regex_container';
+const REGEX_SCRIPT_ROW_SELECTOR = '.regex-script-label';
+const REGEX_SCRIPT_LIST_SELECTOR = '#saved_regex_scripts, #saved_scoped_scripts, #saved_preset_scripts';
 const WORLD_INFO_ENTRY_DRAWER_TOGGLE_SELECTOR = '#world_popup_entries_list > .world_entry > .world_entry_form > .inline-drawer > .inline-drawer-header .inline-drawer-toggle';
 const WORLD_INFO_ENTRY_DRAWER_SELECTOR = '#world_popup_entries_list > .world_entry > .world_entry_form > .inline-drawer';
 const WORLD_INFO_LAZY_SELECT2_SELECTOR = '#world_popup_entries_list .world_entry_edit select[name="characterFilter"], #world_popup_entries_list .world_entry_edit select[name="triggers"]';
@@ -263,6 +270,7 @@ const defaultSettings = {
     presetToggleOptimizationEnabled: true,
     presetPromptCodeMirrorEditorEnabled: true,
     presetAutoSaveAfterPromptEditEnabled: false,
+    regexQuickOperationOptimizationEnabled: true,
     chatDeleteEditFlowOptimizationEnabled: true,
     messageTripleClickEditEnabled: true,
 };
@@ -1561,23 +1569,45 @@ async function checkForSilentExtensionUpdate({ force = false } = {}) {
 }
 
 async function runSilentExtensionUpdate() {
-    const response = await getCurrentExtensionVersion();
+    try {
+        const localVersion = CURRENT_VERSION;
 
-    if (!response.ok) {
-        throw new Error(await getResponseErrorMessage(response));
+        const remoteManifestUrl = `https://raw.githubusercontent.com/baibai-git/SillyTavern-Mobile-Resize-Guard/main/manifest.json?t=${Date.now()}`;
+        const remoteManifestResponse = await fetch(remoteManifestUrl);
+        if (!remoteManifestResponse.ok) {
+            throw new Error(`Failed to fetch remote manifest: ${remoteManifestResponse.statusText}`);
+        }
+        const remoteManifest = await remoteManifestResponse.json();
+        const remoteVersion = remoteManifest.version;
+
+        const updateAvailable = isVersionGreater(remoteVersion, localVersion);
+
+        setCachedUpdateAvailable(updateAvailable);
+        applyUpdateAvailableVisualState(updateAvailable);
+
+        if (updateAvailable) {
+            queueExtensionUpdatePrompt();
+        }
+
+        return { isUpToDate: !updateAvailable };
+    } catch (error) {
+        console.error(`${LOG_PREFIX} Update check failed:`, error);
+        throw error;
     }
+}
 
-    const data = await response.json();
-    const updateAvailable = data.isUpToDate === false;
+function isVersionGreater(v1, v2) {
+    if (!v1 || !v2) return false;
+    const parts1 = v1.split('.').map(Number);
+    const parts2 = v2.split('.').map(Number);
 
-    setCachedUpdateAvailable(updateAvailable);
-    applyUpdateAvailableVisualState(updateAvailable);
-
-    if (updateAvailable) {
-        queueExtensionUpdatePrompt();
+    for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
+        const p1 = parts1[i] || 0;
+        const p2 = parts2[i] || 0;
+        if (p1 > p2) return true;
+        if (p1 < p2) return false;
     }
-
-    return data;
+    return false;
 }
 
 async function getCurrentExtensionVersion() {
@@ -2020,6 +2050,14 @@ async function renderSettingsPanel() {
             saveExtensionSettings();
         });
 
+    $('#bai_bai_toolkit_regex_quick_operation_enabled')
+        .prop('checked', settings.regexQuickOperationOptimizationEnabled)
+        .on('input', function () {
+            settings.regexQuickOperationOptimizationEnabled = Boolean($(this).prop('checked'));
+            saveExtensionSettings();
+            applyRegexQuickOperationOptimization();
+        });
+
     $('#bai_bai_toolkit_message_triple_click_edit_enabled')
         .prop('checked', settings.messageTripleClickEditEnabled)
         .on('input', function () {
@@ -2098,16 +2136,7 @@ async function initializeUpdateUI(container) {
     const badge = container.find('.bai_bai_toolkit_update_badge');
 
     // 获取并显示当前版本号
-    try {
-        const manifestResponse = await fetch(`/scripts/extensions/${MODULE_NAME}/manifest.json`);
-        if (manifestResponse.ok) {
-            const manifest = await manifestResponse.json();
-            versionSpan.text(manifest.version || '未知');
-        }
-    } catch (e) {
-        console.warn(`${LOG_PREFIX} 无法获取版本号`, e);
-        versionSpan.text('未知');
-    }
+    versionSpan.text(CURRENT_VERSION);
 
     // 检查更新
     updateStatus.text('检查更新中...');
@@ -2178,6 +2207,7 @@ function applyFeatureSettings() {
     applyPresetToggleOptimization();
     applyPresetPromptCodeMirrorEditorOptimization();
     applyPresetSaveOptimization();
+    applyRegexQuickOperationOptimization();
     applyWelcomeRecentChatDirectOpenOptimization();
     applyChatDeleteEditFlowOptimization();
     applyTranslateMessageUpdatedOptimization();
@@ -3410,8 +3440,21 @@ function attachCustomCssCodeMirrorEditor(state, source) {
         }, 0);
     };
 
+    const stopPropagationHandler = (event) => {
+        event.stopPropagation();
+    };
+
+    wrapper.addEventListener('mousedown', stopPropagationHandler);
+    wrapper.addEventListener('pointerdown', stopPropagationHandler);
+    wrapper.addEventListener('click', stopPropagationHandler);
     wrapper.addEventListener('focusout', focusOutHandler);
-    state.listeners.push({ target: wrapper, type: 'focusout', handler: focusOutHandler, options: undefined });
+
+    state.listeners.push(
+        { target: wrapper, type: 'mousedown', handler: stopPropagationHandler, options: undefined },
+        { target: wrapper, type: 'pointerdown', handler: stopPropagationHandler, options: undefined },
+        { target: wrapper, type: 'click', handler: stopPropagationHandler, options: undefined },
+        { target: wrapper, type: 'focusout', handler: focusOutHandler, options: undefined }
+    );
 
     const loadingToken = {};
     state.loadingToken = loadingToken;
@@ -3673,6 +3716,7 @@ function createCustomCssCodeMirrorView(state, source, wrapper, modules) {
                 minWidth: '0',
                 padding: '8px',
                 textShadow: 'none',
+                minHeight: '180px',
             },
             '.cm-line': {
                 padding: '0',
@@ -6232,6 +6276,580 @@ function preventPresetDragEvent(event) {
     event.stopImmediatePropagation?.();
 }
 
+function applyRegexQuickOperationOptimization() {
+    if (settings.regexQuickOperationOptimizationEnabled) {
+        installRegexQuickOperationOptimization();
+    } else {
+        removeRegexQuickOperationOptimization();
+    }
+}
+
+function installRegexQuickOperationOptimization() {
+    if (!extensionState[REGEX_QUICK_OPERATION_HANDLER_KEY]) {
+        const handler = (event) => {
+            handleRegexQuickOperationClick(event);
+        };
+
+        extensionState[REGEX_QUICK_OPERATION_HANDLER_KEY] = handler;
+        document.addEventListener('click', handler, true);
+    }
+
+    installRegexQuickOperationMutationObserver();
+    scheduleRegexSortablePatch();
+}
+
+function removeRegexQuickOperationOptimization() {
+    const handler = extensionState[REGEX_QUICK_OPERATION_HANDLER_KEY];
+
+    if (handler) {
+        document.removeEventListener('click', handler, true);
+        delete extensionState[REGEX_QUICK_OPERATION_HANDLER_KEY];
+    }
+
+    const observer = extensionState[REGEX_QUICK_OPERATION_OBSERVER_KEY];
+
+    if (observer) {
+        observer.disconnect();
+        delete extensionState[REGEX_QUICK_OPERATION_OBSERVER_KEY];
+    }
+
+    const state = getRegexQuickOperationState();
+    clearTimeout(state.sortablePatchTimer);
+    state.sortablePatchTimer = null;
+    state.sortablePatchRetries = 0;
+    restoreRegexSortableStops(state);
+}
+
+function getRegexQuickOperationState() {
+    if (!extensionState.regexQuickOperationOptimization || typeof extensionState.regexQuickOperationOptimization !== 'object') {
+        extensionState.regexQuickOperationOptimization = {};
+    }
+
+    const state = extensionState.regexQuickOperationOptimization;
+
+    if (!(state.sortableOriginalStops instanceof Map)) {
+        state.sortableOriginalStops = new Map();
+    }
+
+    return state;
+}
+
+function installRegexQuickOperationMutationObserver() {
+    if (extensionState[REGEX_QUICK_OPERATION_OBSERVER_KEY] || !document.body) {
+        return;
+    }
+
+    const target = document.querySelector(REGEX_CONTAINER_SELECTOR) ?? document.body;
+    const observer = new MutationObserver(() => {
+        scheduleRegexSortablePatch();
+    });
+
+    observer.observe(target, { childList: true, subtree: true });
+    extensionState[REGEX_QUICK_OPERATION_OBSERVER_KEY] = observer;
+}
+
+function scheduleRegexSortablePatch(delayMs = 80) {
+    if (!settings.regexQuickOperationOptimizationEnabled) {
+        return;
+    }
+
+    const state = getRegexQuickOperationState();
+    clearTimeout(state.sortablePatchTimer);
+    state.sortablePatchTimer = setTimeout(() => {
+        state.sortablePatchTimer = null;
+        patchRegexSortableStops();
+    }, delayMs);
+}
+
+function patchRegexSortableStops() {
+    if (!settings.regexQuickOperationOptimizationEnabled) {
+        return;
+    }
+
+    const state = getRegexQuickOperationState();
+    let waitingForSortableInit = false;
+
+    for (const { selector, scriptType } of getRegexScriptListDefinitions()) {
+        const list = document.querySelector(selector);
+
+        if (!(list instanceof HTMLElement)) {
+            continue;
+        }
+
+        const sortable = $(list).sortable;
+
+        if (typeof sortable !== 'function') {
+            continue;
+        }
+
+        if (!isRegexSortableInitialized(list)) {
+            waitingForSortableInit = true;
+            continue;
+        }
+
+        const currentStop = $(list).sortable('option', 'stop');
+
+        if (currentStop?.__baiBaiToolkitRegexQuickOperationStop) {
+            continue;
+        }
+
+        if (!state.sortableOriginalStops.has(list)) {
+            state.sortableOriginalStops.set(list, currentStop);
+        }
+
+        const optimizedStop = function () {
+            void saveRegexScriptOrderFromDom(list, scriptType).catch(error => {
+                console.debug(`${LOG_PREFIX} Failed to save regex script order`, error);
+                toastr.error(t`Failed to save regex script order. See console for details.`);
+            });
+        };
+
+        optimizedStop.__baiBaiToolkitRegexQuickOperationStop = true;
+        optimizedStop.__baiBaiToolkitOriginalRegexStop = currentStop;
+        $(list).sortable('option', 'stop', optimizedStop);
+    }
+
+    if (waitingForSortableInit) {
+        state.sortablePatchRetries = (state.sortablePatchRetries ?? 0) + 1;
+
+        if (state.sortablePatchRetries <= 20) {
+            scheduleRegexSortablePatch(250);
+        }
+    } else {
+        state.sortablePatchRetries = 0;
+    }
+}
+
+function restoreRegexSortableStops(state = getRegexQuickOperationState()) {
+    for (const [list, originalStop] of state.sortableOriginalStops) {
+        try {
+            if (list instanceof HTMLElement && isRegexSortableInitialized(list)) {
+                $(list).sortable('option', 'stop', originalStop ?? null);
+            }
+        } catch (error) {
+            console.debug(`${LOG_PREFIX} Failed to restore regex sortable handler`, error);
+        }
+    }
+
+    state.sortableOriginalStops.clear();
+}
+
+function getRegexScriptListDefinitions() {
+    return [
+        { selector: '#saved_regex_scripts', scriptType: REGEX_SCRIPT_TYPES.GLOBAL },
+        { selector: '#saved_scoped_scripts', scriptType: REGEX_SCRIPT_TYPES.SCOPED },
+        { selector: '#saved_preset_scripts', scriptType: REGEX_SCRIPT_TYPES.PRESET },
+    ];
+}
+
+function isRegexSortableInitialized(list) {
+    return Boolean($(list).data('ui-sortable') || $(list).data('sortable'));
+}
+
+function handleRegexQuickOperationClick(event) {
+    if (!settings.regexQuickOperationOptimizationEnabled) {
+        return;
+    }
+
+    const target = event.target instanceof Element ? event.target : null;
+    const row = target?.closest(`${REGEX_CONTAINER_SELECTOR} ${REGEX_SCRIPT_ROW_SELECTOR}`);
+
+    if (!(row instanceof HTMLElement)) {
+        return;
+    }
+
+    const editButton = target.closest('.edit_existing_regex');
+
+    if (editButton && row.contains(editButton)) {
+        preventRegexQuickOperationEvent(event);
+        void openOptimizedRegexEditor(row);
+        return;
+    }
+
+    const toggle = target.closest('.regex-toggle-on, .regex-toggle-off');
+
+    if (toggle && row.contains(toggle)) {
+        preventRegexQuickOperationEvent(event);
+        void toggleRegexScriptRow(row, toggle);
+        return;
+    }
+
+    const deleteButton = target.closest('.delete_regex');
+
+    if (deleteButton && row.contains(deleteButton)) {
+        preventRegexQuickOperationEvent(event);
+        void deleteRegexScriptRow(row);
+    }
+}
+
+function preventRegexQuickOperationEvent(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+}
+
+async function toggleRegexScriptRow(row, toggle) {
+    const context = getRegexScriptContextFromRow(row);
+
+    if (!context) {
+        return;
+    }
+
+    const nextDisabled = toggle.classList.contains('regex-toggle-on');
+    const previousDisabled = Boolean(context.script.disabled ?? false);
+
+    context.script.disabled = nextDisabled;
+    updateRegexScriptRowDisabled(row, nextDisabled);
+
+    try {
+        await saveRegexScriptList(context.scriptType, context.scripts);
+        allowRegexScriptTypeAfterEditSave(context.scriptType);
+        await reloadCurrentChatForRegexChange();
+    } catch (error) {
+        context.script.disabled = previousDisabled;
+        updateRegexScriptRowDisabled(row, previousDisabled);
+        console.debug(`${LOG_PREFIX} Failed to save regex script toggle`, error);
+        toastr.error(t`Failed to save regex script state. See console for details.`);
+    }
+}
+
+async function deleteRegexScriptRow(row) {
+    const confirm = await callGenericPopup(t`Are you sure you want to delete this regex script?`, POPUP_TYPE.CONFIRM);
+
+    if (!confirm) {
+        return;
+    }
+
+    const context = getRegexScriptContextFromRow(row);
+
+    if (!context) {
+        return;
+    }
+
+    const [removedScript] = context.scripts.splice(context.index, 1);
+
+    try {
+        await saveRegexScriptList(context.scriptType, context.scripts);
+        row.remove();
+        updateRegexBulkControls();
+        await reloadCurrentChatForRegexChange();
+    } catch (error) {
+        if (removedScript) {
+            context.scripts.splice(context.index, 0, removedScript);
+        }
+
+        console.debug(`${LOG_PREFIX} Failed to delete regex script`, error);
+        toastr.error(t`Failed to delete regex script. See console for details.`);
+    }
+}
+
+async function openOptimizedRegexEditor(row) {
+    const context = getRegexScriptContextFromRow(row);
+
+    if (!context) {
+        return;
+    }
+
+    if (!context.script.scriptName) {
+        toastr.error('This script doesn\'t have a name! Please delete it.');
+        return;
+    }
+
+    const editorHtml = $(await renderExtensionTemplateAsync('regex', 'editor'));
+    fillOptimizedRegexEditor(editorHtml, context.script);
+    installOptimizedRegexEditorPreview(editorHtml);
+
+    const popupResult = await callGenericPopup(editorHtml, POPUP_TYPE.CONFIRM, '', {
+        okButton: t`Save`,
+        cancelButton: t`Cancel`,
+        allowVerticalScrolling: true,
+    });
+
+    if (!popupResult) {
+        return;
+    }
+
+    const updatedScript = readOptimizedRegexEditorScript(editorHtml, context.script);
+
+    if (!updatedScript.scriptName) {
+        toastr.error(t`Could not save regex script: The script name was undefined or empty!`);
+        return;
+    }
+
+    if (updatedScript.findRegex.length === 0) {
+        toastr.warning(t`This regex script will not work, but was saved anyway: A find regex isn't present.`);
+    }
+
+    if (updatedScript.placement.length === 0) {
+        toastr.warning(t`This regex script will not work, but was saved anyway: One "Affects" checkbox must be selected!`);
+    }
+
+    const previousScript = context.scripts[context.index];
+    context.scripts[context.index] = updatedScript;
+
+    try {
+        await saveRegexScriptList(context.scriptType, context.scripts);
+        allowRegexScriptTypeAfterEditSave(context.scriptType);
+        updateRegexScriptRowFromScript(row, updatedScript);
+        await reloadCurrentChatForRegexChange();
+    } catch (error) {
+        context.scripts[context.index] = previousScript;
+        console.debug(`${LOG_PREFIX} Failed to save regex script edit`, error);
+        toastr.error(t`Failed to save regex script. See console for details.`);
+    }
+}
+
+function fillOptimizedRegexEditor(editorHtml, script) {
+    editorHtml.find('.regex_script_name').val(script.scriptName || '');
+    editorHtml.find('.find_regex').val(script.findRegex || '');
+    editorHtml.find('.regex_replace_string').val(script.replaceString || '');
+    editorHtml.find('.regex_trim_strings').val(Array.isArray(script.trimStrings) ? script.trimStrings.join('\n') : '');
+    editorHtml.find('input[name="disabled"]').prop('checked', Boolean(script.disabled ?? false));
+    editorHtml.find('input[name="only_format_display"]').prop('checked', Boolean(script.markdownOnly ?? false));
+    editorHtml.find('input[name="only_format_prompt"]').prop('checked', Boolean(script.promptOnly ?? false));
+    editorHtml.find('input[name="run_on_edit"]').prop('checked', Boolean(script.runOnEdit ?? false));
+    editorHtml.find('select[name="substitute_regex"]').val(script.substituteRegex ?? substitute_find_regex.NONE);
+    editorHtml.find('input[name="min_depth"]').val(Number.isNaN(script.minDepth) ? '' : script.minDepth ?? '');
+    editorHtml.find('input[name="max_depth"]').val(Number.isNaN(script.maxDepth) ? '' : script.maxDepth ?? '');
+
+    for (const placement of Array.isArray(script.placement) ? script.placement : []) {
+        editorHtml.find(`input[name="replace_position"][value="${placement}"]`).prop('checked', true);
+    }
+}
+
+function installOptimizedRegexEditorPreview(editorHtml) {
+    const updateTestResult = () => {
+        updateOptimizedRegexInfoBlock(editorHtml);
+
+        if (!editorHtml.find('#regex_test_mode').is(':visible')) {
+            return;
+        }
+
+        const testScript = {
+            id: 'bai-bai-toolkit-regex-test',
+            scriptName: String(editorHtml.find('.regex_script_name').val()),
+            findRegex: String(editorHtml.find('.find_regex').val()),
+            replaceString: String(editorHtml.find('.regex_replace_string').val()),
+            trimStrings: splitRegexTrimStrings(editorHtml.find('.regex_trim_strings').val()),
+            substituteRegex: Number(editorHtml.find('select[name="substitute_regex"]').val()),
+            disabled: false,
+            promptOnly: false,
+            markdownOnly: false,
+            runOnEdit: false,
+            minDepth: null,
+            maxDepth: null,
+            placement: null,
+        };
+        const rawTestString = String(editorHtml.find('#regex_test_input').val());
+        const result = runRegexScript(testScript, rawTestString);
+        editorHtml.find('#regex_test_output').text(result);
+    };
+
+    editorHtml.find('#regex_test_mode_toggle').on('click', function () {
+        editorHtml.find('#regex_test_mode').toggleClass('displayNone');
+        updateTestResult();
+    });
+
+    editorHtml.find('input, textarea, select').on('input', updateTestResult);
+    updateOptimizedRegexInfoBlock(editorHtml);
+}
+
+function updateOptimizedRegexInfoBlock(editorHtml) {
+    const infoBlock = editorHtml.find('.info-block').get(0);
+    const infoBlockFlagsHint = editorHtml.find('#regex_info_block_flags_hint');
+    const findRegex = String(editorHtml.find('.find_regex').val());
+
+    infoBlockFlagsHint.hide();
+
+    if (!findRegex) {
+        setInfoBlock(infoBlock, t`Find Regex is empty`, 'info');
+        return;
+    }
+
+    try {
+        const regex = regexFromString(findRegex);
+
+        if (!regex) {
+            throw new Error(t`Invalid Find Regex`);
+        }
+
+        const flagInfo = [];
+        flagInfo.push(regex.flags.includes('g') ? t`Applies to all matches` : t`Applies to the first match`);
+        flagInfo.push(regex.flags.includes('i') ? t`Case insensitive` : t`Case sensitive`);
+
+        setInfoBlock(infoBlock, flagInfo.join('. '), 'hint');
+        infoBlockFlagsHint.show();
+    } catch (error) {
+        setInfoBlock(infoBlock, error.message, 'error');
+    }
+}
+
+function readOptimizedRegexEditorScript(editorHtml, existingScript) {
+    return {
+        ...existingScript,
+        id: String(existingScript.id),
+        scriptName: String(editorHtml.find('.regex_script_name').val()),
+        findRegex: String(editorHtml.find('.find_regex').val()),
+        replaceString: String(editorHtml.find('.regex_replace_string').val()),
+        trimStrings: splitRegexTrimStrings(editorHtml.find('.regex_trim_strings').val()),
+        placement: editorHtml
+            .find('input[name="replace_position"]')
+            .filter(':checked')
+            .map(function () { return parseInt($(this).val().toString()); })
+            .get()
+            .filter(value => !isNaN(value)) || [],
+        disabled: Boolean(editorHtml.find('input[name="disabled"]').prop('checked')),
+        markdownOnly: Boolean(editorHtml.find('input[name="only_format_display"]').prop('checked')),
+        promptOnly: Boolean(editorHtml.find('input[name="only_format_prompt"]').prop('checked')),
+        runOnEdit: Boolean(editorHtml.find('input[name="run_on_edit"]').prop('checked')),
+        substituteRegex: Number(editorHtml.find('select[name="substitute_regex"]').val()),
+        minDepth: parseInt(String(editorHtml.find('input[name="min_depth"]').val())),
+        maxDepth: parseInt(String(editorHtml.find('input[name="max_depth"]').val())),
+    };
+}
+
+function splitRegexTrimStrings(value) {
+    return String(value).split('\n').filter(item => item.length !== 0) || [];
+}
+
+function getRegexScriptContextFromRow(row) {
+    const scriptId = row.id;
+    const list = row.closest(REGEX_SCRIPT_LIST_SELECTOR);
+    const scriptType = getRegexScriptTypeFromList(list);
+
+    if (!scriptId || scriptType === null) {
+        return null;
+    }
+
+    const scripts = getRegexScriptsByType(scriptType);
+    const index = scripts.findIndex(script => script?.id === scriptId);
+
+    if (index === -1) {
+        return null;
+    }
+
+    return {
+        row,
+        list,
+        scriptId,
+        scriptType,
+        scripts,
+        index,
+        script: scripts[index],
+    };
+}
+
+function getRegexScriptTypeFromList(list) {
+    if (!(list instanceof HTMLElement)) {
+        return null;
+    }
+
+    switch (list.id) {
+        case 'saved_regex_scripts':
+            return REGEX_SCRIPT_TYPES.GLOBAL;
+        case 'saved_scoped_scripts':
+            return REGEX_SCRIPT_TYPES.SCOPED;
+        case 'saved_preset_scripts':
+            return REGEX_SCRIPT_TYPES.PRESET;
+        default:
+            return null;
+    }
+}
+
+function updateRegexScriptRowDisabled(row, disabled) {
+    const checkbox = row.querySelector('.disable_regex');
+
+    if (checkbox instanceof HTMLInputElement) {
+        checkbox.checked = disabled;
+    }
+}
+
+function updateRegexScriptRowFromScript(row, script) {
+    row.id = script.id;
+    const name = script.scriptName || '';
+    const nameElement = row.querySelector('.regex_script_name');
+
+    if (nameElement instanceof HTMLElement) {
+        nameElement.textContent = name;
+        nameElement.title = name;
+    }
+
+    updateRegexScriptRowDisabled(row, Boolean(script.disabled ?? false));
+}
+
+async function saveRegexScriptOrderFromDom(list, scriptType) {
+    const scripts = getRegexScriptsByType(scriptType);
+    const scriptById = new Map(scripts.filter(Boolean).map(script => [script.id, script]));
+    const seen = new Set();
+    const reorderedScripts = [];
+
+    for (const row of list.querySelectorAll(`:scope > ${REGEX_SCRIPT_ROW_SELECTOR}`)) {
+        const scriptId = row.id;
+        const script = scriptById.get(scriptId);
+
+        if (!script || seen.has(scriptId)) {
+            continue;
+        }
+
+        seen.add(scriptId);
+        reorderedScripts.push(script);
+    }
+
+    for (const script of scripts) {
+        if (script?.id && !seen.has(script.id)) {
+            reorderedScripts.push(script);
+        }
+    }
+
+    if (reorderedScripts.length !== scripts.length) {
+        console.debug(`${LOG_PREFIX} Regex order save skipped because DOM and data lengths differ`);
+        return;
+    }
+
+    await saveRegexScriptList(scriptType, reorderedScripts);
+    console.debug(`${LOG_PREFIX} Regex scripts in ${list.id} reordered without list rebuild`);
+    await reloadCurrentChatForRegexChange();
+}
+
+async function saveRegexScriptList(scriptType, scripts) {
+    await saveRegexScriptsByType(scripts, scriptType);
+    saveSettingsDebounced();
+}
+
+function allowRegexScriptTypeAfterEditSave(scriptType) {
+    if (scriptType === REGEX_SCRIPT_TYPES.SCOPED) {
+        allowRegexScopedScripts(characters?.[this_chid]);
+        return;
+    }
+
+    if (scriptType === REGEX_SCRIPT_TYPES.PRESET) {
+        allowRegexPresetScripts(getRegexCurrentPresetAPI(), getRegexCurrentPresetName());
+    }
+}
+
+async function reloadCurrentChatForRegexChange() {
+    if (getCurrentChatId()) {
+        await reloadCurrentChat();
+    }
+}
+
+function updateRegexBulkControls() {
+    const checkboxes = $(`${REGEX_CONTAINER_SELECTOR} .regex_bulk_checkbox`);
+    const allAreChecked = checkboxes.length > 0 && checkboxes.length === checkboxes.filter(':checked').length;
+    const selectAllIcon = $('#bulk_select_all_toggle').find('i');
+
+    selectAllIcon.toggleClass('fa-check-double', !allAreChecked);
+    selectAllIcon.toggleClass('fa-minus', allAreChecked);
+
+    const hasGlobalScripts = $('#saved_regex_scripts .regex-script-label:has(.regex_bulk_checkbox:checked)').length > 0;
+    const hasScopedScripts = $('#saved_scoped_scripts .regex-script-label:has(.regex_bulk_checkbox:checked)').length > 0;
+    const hasPresetScripts = $('#saved_preset_scripts .regex-script-label:has(.regex_bulk_checkbox:checked)').length > 0;
+
+    $('#bulk_regex_move_to_global').toggle(hasScopedScripts || hasPresetScripts);
+    $('#bulk_regex_move_to_scoped').toggle(hasGlobalScripts || hasPresetScripts);
+    $('#bulk_regex_move_to_preset').toggle(hasGlobalScripts || hasScopedScripts);
+}
+
 function applyWorldInfoDrawerOptimization() {
     if (extensionState[WORLD_INFO_DRAWER_HANDLER_KEY]) {
         return;
@@ -7620,8 +8238,21 @@ function attachPresetPromptCodeMirrorEditor(state, source) {
         }, 0);
     };
 
+    const stopPropagationHandler = (event) => {
+        event.stopPropagation();
+    };
+
+    wrapper.addEventListener('mousedown', stopPropagationHandler);
+    wrapper.addEventListener('pointerdown', stopPropagationHandler);
+    wrapper.addEventListener('click', stopPropagationHandler);
     wrapper.addEventListener('focusout', focusOutHandler);
-    state.listeners.push({ target: wrapper, type: 'focusout', handler: focusOutHandler, options: undefined });
+
+    state.listeners.push(
+        { target: wrapper, type: 'mousedown', handler: stopPropagationHandler, options: undefined },
+        { target: wrapper, type: 'pointerdown', handler: stopPropagationHandler, options: undefined },
+        { target: wrapper, type: 'click', handler: stopPropagationHandler, options: undefined },
+        { target: wrapper, type: 'focusout', handler: focusOutHandler, options: undefined }
+    );
 
     const loadingToken = {};
     state.loadingToken = loadingToken;
@@ -7779,6 +8410,7 @@ function createPresetPromptCodeMirrorView(state, source, wrapper, modules) {
                 minWidth: '0',
                 padding: '8px',
                 textShadow: 'none',
+                minHeight: 'min(34vh, 360px)',
             },
             '.cm-line': {
                 padding: '0',
@@ -8198,8 +8830,21 @@ function attachDescriptionCodeMirrorEditor(state, source) {
         }, 0);
     };
 
+    const stopPropagationHandler = (event) => {
+        event.stopPropagation();
+    };
+
+    wrapper.addEventListener('mousedown', stopPropagationHandler);
+    wrapper.addEventListener('pointerdown', stopPropagationHandler);
+    wrapper.addEventListener('click', stopPropagationHandler);
     wrapper.addEventListener('focusout', focusOutHandler);
-    state.listeners.push({ target: wrapper, type: 'focusout', handler: focusOutHandler, options: undefined });
+
+    state.listeners.push(
+        { target: wrapper, type: 'mousedown', handler: stopPropagationHandler, options: undefined },
+        { target: wrapper, type: 'pointerdown', handler: stopPropagationHandler, options: undefined },
+        { target: wrapper, type: 'click', handler: stopPropagationHandler, options: undefined },
+        { target: wrapper, type: 'focusout', handler: focusOutHandler, options: undefined }
+    );
 
     const loadingToken = {};
     state.loadingToken = loadingToken;
@@ -8359,6 +9004,7 @@ function createDescriptionCodeMirrorView(state, source, wrapper, modules) {
                 contain: 'layout paint style',
                 padding: '8px',
                 textShadow: 'none',
+                minHeight: 'min(42vh, 420px)',
             },
             '.cm-line': {
                 padding: '0',

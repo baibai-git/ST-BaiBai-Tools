@@ -16,6 +16,7 @@ What it does:
 - Speeds up OpenAI preset switching by letting the mobile preset select close first, rendering the prompt list immediately, suppressing the stock one-second delayed rebuild for that switch, and refreshing token counts afterward
 - Replaces prompt preset dragging with a non-reflow drag preview that moves a floating clone, shows an insertion line, and only reorders the list when dropped
 - Speeds up prompt preset toggles and saves by updating only the affected prompt row immediately, then refreshing token counts after a short debounce instead of rebuilding the whole prompt list on every click
+- Speeds up existing regex script toggles, edits, deletes, and drag sorting by updating the affected regex row or order without rebuilding all regex lists
 - Adds a `预设内容 CodeMirror 编辑器` switch that replaces the OpenAI prompt entry content textarea, including SillyTavern's expanded editor, while keeping the original form fields synchronized for saves
 - Optionally saves the current OpenAI preset after a prompt entry edit is saved; this switch is off by default
 - Allows double or triple clicking on a message text bubble to quickly open the message editor for that message floor
@@ -40,6 +41,8 @@ The prompt preset switch optimization only applies to the OpenAI/chat-completion
 The prompt preset drag optimization only applies to the OpenAI/chat-completion prompt manager list. It is enabled by default. When enabled, it bypasses the stock jQuery UI sortable behavior so nearby prompt rows do not move out of the way while dragging. The original row keeps its layout slot, a floating clone follows the pointer, an insertion line previews the drop target, and the prompt order is saved only after dropping. On mobile, prompt rows use long press to start dragging, while normal scrolling cancels the pending drag. A separate mobile switch controls whether the whole row can start a drag; this mobile whole-row switch is disabled by default, so only the left drag handle starts mobile dragging unless enabled. The feature switch restores SillyTavern's original sortable behavior when disabled.
 
 The prompt preset quick-operation optimization only applies to existing rows in the OpenAI/chat-completion prompt manager list. New prompt creation still falls back to SillyTavern's original behavior because it changes the available prompt list. The feature switch preserves SillyTavern's original behavior when disabled.
+
+The regex quick-operation optimization only applies to existing regex rows. It intercepts single-row enable/disable, edit, and delete clicks, then updates the affected row directly. It also replaces the regex list sortable stop handler so drag sorting saves the new order without immediately rebuilding the global, preset, and scoped regex lists. Regex creation, bulk operations, imports, and preset application still use SillyTavern's original full refresh behavior.
 
 The prompt preset content CodeMirror editor is enabled by default. It replaces the prompt entry content textarea and its expanded editor with a plain CodeMirror editor, flushes content back to SillyTavern before saving, supports read-only marker prompts, and falls back to the original textarea if CodeMirror cannot be loaded.
 
