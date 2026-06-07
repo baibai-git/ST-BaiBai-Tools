@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:vendor": "node scripts/build-vue-vendor.js"
+  },
+  "devDependencies": {
+    "vue": "^3.5.16"
+  }
+}

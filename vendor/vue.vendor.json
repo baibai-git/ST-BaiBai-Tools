@@ -1,0 +1,6 @@
+{
+  "package": "vue",
+  "version": "3.5.35",
+  "source": "node_modules/vue/dist/vue.esm-browser.prod.js",
+  "output": "vendor/vue.esm-browser.prod.js"
+}

@@ -1,1 +1,3 @@
 .codex-codemirror-build/
+node_modules/
+.npm-cache/
