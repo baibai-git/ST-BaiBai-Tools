@@ -10,15 +10,16 @@ import {
 } from '../../../../script.js';
 import * as scriptModule from '../../../../script.js';
 import { AutoComplete } from '../../../autocomplete/AutoComplete.js';
-import { extension_settings, extensionTypes, renderExtensionTemplateAsync } from '../../../extensions.js';
+import { extension_settings, extensionTypes, renderExtensionTemplateAsync, writeExtensionField } from '../../../extensions.js';
 import { selected_group } from '../../../group-chats.js';
 import { t } from '../../../i18n.js';
 import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from '../../../popup.js';
 import { isMobile, favsToHotswap } from '../../../RossAscends-mods.js';
+import { getPresetManager } from '../../../preset-manager.js';
 import { power_user } from '../../../power-user.js';
 import { isAdmin } from '../../../user.js';
 import { debounce, download, getFileText, regexFromString, resetScrollHeight, setInfoBlock, uuidv4 } from '../../../utils.js';
-import { allowPresetScripts as allowRegexPresetScripts, allowScopedScripts as allowRegexScopedScripts, getCurrentPresetAPI as getRegexCurrentPresetAPI, getCurrentPresetName as getRegexCurrentPresetName, getScriptsByType as getRegexScriptsByType, runRegexScript, saveScriptsByType as saveRegexScriptsByType, SCRIPT_TYPES as REGEX_SCRIPT_TYPES, substitute_find_regex } from '../../regex/engine.js';
+import { getCurrentPresetAPI as getRegexCurrentPresetAPI, getCurrentPresetName as getRegexCurrentPresetName, getScriptsByType as getRegexScriptsByType, runRegexScript, SCRIPT_TYPES as REGEX_SCRIPT_TYPES, substitute_find_regex } from '../../regex/engine.js';
 import * as chatOptimizations from './chatOptimizations.js';
 import * as presetOptimizations from './presetOptimizations.js';
 
@@ -4084,7 +4085,7 @@ function renderRegexVueScriptRow(h, model, list, script) {
             checked,
             onChange: event => setRegexVueScriptSelected(script.id, Boolean(event.target?.checked)),
         }),
-        h('span', { class: 'drag-handle menu-handle bai-bai-regex-script-drag-handle' }, '\u2630'),
+        h('span', { class: 'menu-handle bai-bai-regex-script-drag-handle' }, '\u2630'),
         h('div', {
             class: 'regex_script_name flex1 overflow-hidden',
             title: script.scriptName || '',
@@ -4596,7 +4597,7 @@ function normalizeRegexGroupState(groupState) {
 
 function saveRegexGroupSettings() {
     extension_settings[SETTINGS_KEY].regexListGroups = settings.regexListGroups;
-    saveSettingsDebounced();
+    markRegexGroupSettingsSavePending();
 }
 
 async function createRegexVueGroup(scriptType) {
@@ -6265,18 +6266,121 @@ function updateRegexScriptRowFromScript(row, script) {
 }
 
 async function saveRegexScriptList(scriptType, scripts) {
-    await saveRegexScriptsByType(scripts, scriptType);
-    saveSettingsDebounced();
+    markRegexScriptListSavePending(scriptType, scripts);
+}
+
+function markRegexScriptListSavePending(scriptType, scripts) {
+    const state = getRegexQuickOperationState();
+
+    if (!state.pendingRegexScriptSaves || !(state.pendingRegexScriptSaves instanceof Map)) {
+        state.pendingRegexScriptSaves = new Map();
+    }
+
+    const entry = createPendingRegexScriptSaveEntry(scriptType, scripts);
+
+    if (!entry) {
+        return;
+    }
+
+    state.pendingRegexScriptSaves.set(entry.scopeKey, entry);
+    schedulePendingRegexChangesFlushCheck();
+}
+
+function createPendingRegexScriptSaveEntry(scriptType, scripts) {
+    const safeScripts = Array.isArray(scripts) ? scripts : [];
+
+    switch (scriptType) {
+        case REGEX_SCRIPT_TYPES.GLOBAL:
+            return {
+                scriptType,
+                scopeKey: getRegexGroupScopeKey(scriptType),
+                scripts: safeScripts,
+            };
+        case REGEX_SCRIPT_TYPES.SCOPED: {
+            if (this_chid === undefined || !characters?.[this_chid]) {
+                return null;
+            }
+
+            return {
+                scriptType,
+                scopeKey: getRegexGroupScopeKey(scriptType),
+                scripts: safeScripts,
+                characterId: this_chid,
+            };
+        }
+        case REGEX_SCRIPT_TYPES.PRESET: {
+            const apiId = getRegexCurrentPresetAPI();
+            const presetName = getRegexCurrentPresetName();
+
+            if (!apiId || !presetName) {
+                return null;
+            }
+
+            return {
+                scriptType,
+                scopeKey: getRegexGroupScopeKey(scriptType),
+                scripts: safeScripts,
+                apiId,
+                presetName,
+            };
+        }
+        default:
+            return null;
+    }
+}
+
+function markRegexGroupSettingsSavePending() {
+    const state = getRegexQuickOperationState();
+    extension_settings[SETTINGS_KEY].regexListGroups = settings.regexListGroups;
+    state.pendingRegexGroupSettingsSave = true;
+    schedulePendingRegexChangesFlushCheck();
+}
+
+function schedulePendingRegexChangesFlushCheck() {
+    installRegexChatReloadVisibilityObserver();
+    scheduleRegexChatReloadVisibilityCheck(0);
 }
 
 function allowRegexScriptTypeAfterEditSave(scriptType) {
     if (scriptType === REGEX_SCRIPT_TYPES.SCOPED) {
-        allowRegexScopedScripts(characters?.[this_chid]);
+        const avatar = characters?.[this_chid]?.avatar;
+
+        if (!avatar) {
+            return;
+        }
+
+        if (!Array.isArray(extension_settings.character_allowed_regex)) {
+            extension_settings.character_allowed_regex = [];
+        }
+
+        if (!extension_settings.character_allowed_regex.includes(avatar)) {
+            extension_settings.character_allowed_regex.push(avatar);
+            markRegexGroupSettingsSavePending();
+        }
+
         return;
     }
 
     if (scriptType === REGEX_SCRIPT_TYPES.PRESET) {
-        allowRegexPresetScripts(getRegexCurrentPresetAPI(), getRegexCurrentPresetName());
+        const apiId = getRegexCurrentPresetAPI();
+        const presetName = getRegexCurrentPresetName();
+
+        if (!apiId || !presetName) {
+            return;
+        }
+
+        if (!extension_settings.preset_allowed_regex || typeof extension_settings.preset_allowed_regex !== 'object') {
+            extension_settings.preset_allowed_regex = {};
+        }
+
+        if (!Array.isArray(extension_settings.preset_allowed_regex[apiId])) {
+            extension_settings.preset_allowed_regex[apiId] = [];
+        }
+
+        if (!extension_settings.preset_allowed_regex[apiId].includes(presetName)) {
+            extension_settings.preset_allowed_regex[apiId].push(presetName);
+            markRegexGroupSettingsSavePending();
+        }
     }
 }
 
@@ -6353,7 +6457,7 @@ function scheduleRegexChatReloadVisibilityCheck(delayMs = REGEX_CHAT_RELOAD_VISI
 function checkPendingRegexChatReload() {
     const state = getRegexQuickOperationState();
 
-    if (!state.pendingChatReload) {
+    if (!state.pendingChatReload && !hasPendingRegexChanges()) {
         removeRegexChatReloadVisibilityWatch();
         return;
     }
@@ -6369,25 +6473,130 @@ function checkPendingRegexChatReload() {
 async function flushPendingRegexChatReload() {
     const state = getRegexQuickOperationState();
 
-    if (!state.pendingChatReload || state.chatReloadInFlight) {
+    if ((!state.pendingChatReload && !hasPendingRegexChanges()) || state.chatReloadInFlight) {
         return;
     }
 
+    const shouldReload = Boolean(state.pendingChatReload);
     state.pendingChatReload = false;
     state.chatReloadInFlight = true;
     removeRegexChatReloadVisibilityWatch();
 
     try {
-        await reloadCurrentChatForRegexChange();
+        await flushPendingRegexChanges();
+
+        if (shouldReload) {
+            await reloadCurrentChatForRegexChange();
+        }
     } catch (error) {
-        console.debug(`${LOG_PREFIX} Failed to reload chat after regex change`, error);
+        if (shouldReload) {
+            state.pendingChatReload = true;
+        }
+
+        console.debug(`${LOG_PREFIX} Failed to flush regex changes`, error);
+        toastr.error(t`Failed to save regex changes. See console for details.`);
     } finally {
         state.chatReloadInFlight = false;
 
-        if (state.pendingChatReload) {
+        if (state.pendingChatReload || hasPendingRegexChanges()) {
             installRegexChatReloadVisibilityObserver();
             scheduleRegexChatReloadVisibilityCheck();
         }
+    }
+}
+
+function hasPendingRegexChanges() {
+    const state = getRegexQuickOperationState();
+    return Boolean(state.pendingRegexGroupSettingsSave || state.pendingRegexScriptSaves?.size > 0);
+}
+
+async function flushPendingRegexChanges() {
+    const state = getRegexQuickOperationState();
+
+    if (state.regexChangesSavePromise) {
+        return state.regexChangesSavePromise;
+    }
+
+    const pendingScriptSaves = state.pendingRegexScriptSaves instanceof Map
+        ? Array.from(state.pendingRegexScriptSaves.values())
+        : [];
+    const shouldSaveGroups = Boolean(state.pendingRegexGroupSettingsSave);
+
+    if (pendingScriptSaves.length === 0 && !shouldSaveGroups) {
+        return;
+    }
+
+    state.regexChangesSaveInFlight = true;
+    const shouldSaveSettings = shouldSaveGroups || pendingScriptSaves.some(entry => entry.scriptType === REGEX_SCRIPT_TYPES.GLOBAL);
+    const savePromise = (async () => {
+        try {
+            state.pendingRegexScriptSaves = new Map();
+            state.pendingRegexGroupSettingsSave = false;
+
+            for (const entry of pendingScriptSaves) {
+                await flushPendingRegexScriptSave(entry);
+            }
+
+            if (shouldSaveSettings) {
+                extension_settings[SETTINGS_KEY].regexListGroups = settings.regexListGroups;
+                saveSettingsDebounced();
+            }
+        } catch (error) {
+            if (!state.pendingRegexScriptSaves || !(state.pendingRegexScriptSaves instanceof Map)) {
+                state.pendingRegexScriptSaves = new Map();
+            }
+
+            for (const entry of pendingScriptSaves) {
+                state.pendingRegexScriptSaves.set(entry.scopeKey, entry);
+            }
+
+            state.pendingRegexGroupSettingsSave = state.pendingRegexGroupSettingsSave || shouldSaveGroups;
+            throw error;
+        } finally {
+            state.regexChangesSaveInFlight = false;
+        }
+    })();
+
+    state.regexChangesSavePromise = savePromise;
+
+    try {
+        await savePromise;
+    } finally {
+        if (state.regexChangesSavePromise === savePromise) {
+            state.regexChangesSavePromise = null;
+        }
+
+        if (hasPendingRegexChanges()) {
+            installRegexChatReloadVisibilityObserver();
+            scheduleRegexChatReloadVisibilityCheck();
+        }
+    }
+}
+
+async function flushPendingRegexScriptSave(entry) {
+    switch (entry.scriptType) {
+        case REGEX_SCRIPT_TYPES.GLOBAL:
+            extension_settings.regex = entry.scripts;
+            break;
+        case REGEX_SCRIPT_TYPES.SCOPED:
+            await writeExtensionField(entry.characterId, 'regex_scripts', entry.scripts);
+            break;
+        case REGEX_SCRIPT_TYPES.PRESET: {
+            const presetManager = getPresetManager(entry.apiId);
+
+            if (!presetManager) {
+                throw new Error(`Preset manager not found for API: ${entry.apiId}`);
+            }
+
+            await presetManager.writePresetExtensionField({
+                name: entry.presetName,
+                path: 'regex_scripts',
+                value: entry.scripts,
+            });
+            break;
+        }
+        default:
+            break;
     }
 }
 
@@ -6403,15 +6612,9 @@ function removeRegexChatReloadVisibilityWatch() {
 }
 
 function isRegexPanelVisible() {
-    const regexContainer = document.querySelector(REGEX_CONTAINER_SELECTOR);
-
-    if (!isRegexReloadVisibilityElementVisible(regexContainer)) {
-        return false;
-    }
-
     const extensionsPanel = document.querySelector(REGEX_EXTENSIONS_PANEL_SELECTOR);
 
-    if (extensionsPanel instanceof HTMLElement && !isRegexReloadVisibilityElementVisible(extensionsPanel)) {
+    if (!isRegexReloadVisibilityElementVisible(extensionsPanel)) {
         return false;
     }
 
