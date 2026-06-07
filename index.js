@@ -5,6 +5,7 @@ import {
     getCurrentChatId,
     getRequestHeaders,
     reloadCurrentChat,
+    saveSettings,
     saveSettingsDebounced,
     this_chid,
 } from '../../../../script.js';
@@ -41,6 +42,7 @@ const DESCRIPTION_CODEMIRROR_MODULES_KEY = '__baiBaiToolkitDescriptionCodeMirror
 const REGEX_QUICK_OPERATION_HANDLER_KEY = '__baiBaiToolkitRegexQuickOperationHandler';
 const REGEX_QUICK_OPERATION_OBSERVER_KEY = '__baiBaiToolkitRegexQuickOperationObserver';
 const REGEX_QUICK_OPERATION_IMPORT_HANDLER_KEY = '__baiBaiToolkitRegexQuickOperationImportHandler';
+const REGEX_PENDING_CHANGES_LIFECYCLE_HANDLER_KEY = '__baiBaiToolkitRegexPendingChangesLifecycleHandler';
 const REGEX_VUE_MANAGER_CLICK_HANDLER_KEY = '__baiBaiToolkitRegexVueManagerClickHandler';
 const REGEX_VUE_SCOPED_CONTEXT_HANDLER_KEY = '__baiBaiToolkitRegexVueScopedContextHandler';
 const REGEX_VUE_NATIVE_RENDER_GUARD_KEY = '__baiBaiToolkitRegexVueNativeRenderGuard';
@@ -49,6 +51,7 @@ const REGEX_VUE_MANAGER_STYLE_ID = 'bai_bai_toolkit_regex_vue_manager_style';
 const REGEX_VUE_MANAGER_MODULE_PATH = './vendor/vue.esm-browser.prod.js';
 const REGEX_VUE_DRAGGABLE_MODULE_PATH = './vendor/vue-draggable-next.esm-browser.prod.js';
 const REGEX_UNGROUPED_GROUP_ID = '__ungrouped';
+const REGEX_PENDING_ASSIGNMENT_GROUP_ID = '__pending_assignment';
 const REGEX_VUE_GROUP_BODY_TRANSITION_KEY = '__baiBaiToolkitRegexVueGroupBodyTransition';
 const REGEX_VUE_GROUP_COLLAPSE_ANIMATION_MS = 180;
 const DESCRIPTION_EDITOR_SOURCE_SELECTOR = '#description_textarea';
@@ -3290,6 +3293,7 @@ function installRegexQuickOperationOptimization() {
     installRegexVueNativeRenderGuard();
     installRegexQuickOperationMutationObserver();
     installOptimizedRegexImportHandler();
+    installRegexPendingChangesLifecycleGuard();
     installRegexVueManagerActionHandler();
     installRegexVueScopedContextHandler();
     scheduleNativeRegexSortableGuard();
@@ -3318,6 +3322,7 @@ function removeRegexQuickOperationOptimization() {
     state.scriptTemplate = null;
     void flushPendingRegexChatReload();
     removeRegexChatReloadVisibilityWatch();
+    removeRegexPendingChangesLifecycleGuard();
     removeRegexVueNativeRenderGuard();
     removeRegexVueScopedContextHandler();
     removeOptimizedRegexImportHandler();
@@ -3337,6 +3342,63 @@ function getRegexQuickOperationState() {
     }
 
     return state;
+}
+
+function installRegexPendingChangesLifecycleGuard() {
+    if (extensionState[REGEX_PENDING_CHANGES_LIFECYCLE_HANDLER_KEY]) {
+        return;
+    }
+
+    const beforeUnloadHandler = (event) => {
+        const state = getRegexQuickOperationState();
+
+        if (!hasPendingRegexChanges() && !state.regexChangesSaveInFlight && !state.regexChangesSavePromise) {
+            return;
+        }
+
+        void flushPendingRegexChanges().catch(error => {
+            console.debug(`${LOG_PREFIX} Failed to flush regex changes before unload`, error);
+        });
+        event.preventDefault();
+        event.returnValue = '';
+        return '';
+    };
+
+    const pageLifecycleHandler = (event) => {
+        if (event?.type === 'visibilitychange' && document.visibilityState !== 'hidden') {
+            return;
+        }
+
+        if (!hasPendingRegexChanges()) {
+            return;
+        }
+
+        void flushPendingRegexChanges().catch(error => {
+            console.debug(`${LOG_PREFIX} Failed to flush regex changes during page lifecycle event`, error);
+        });
+    };
+
+    extensionState[REGEX_PENDING_CHANGES_LIFECYCLE_HANDLER_KEY] = {
+        beforeUnloadHandler,
+        pageLifecycleHandler,
+    };
+
+    window.addEventListener('beforeunload', beforeUnloadHandler);
+    window.addEventListener('pagehide', pageLifecycleHandler);
+    document.addEventListener('visibilitychange', pageLifecycleHandler);
+}
+
+function removeRegexPendingChangesLifecycleGuard() {
+    const entry = extensionState[REGEX_PENDING_CHANGES_LIFECYCLE_HANDLER_KEY];
+
+    if (!entry) {
+        return;
+    }
+
+    window.removeEventListener('beforeunload', entry.beforeUnloadHandler);
+    window.removeEventListener('pagehide', entry.pageLifecycleHandler);
+    document.removeEventListener('visibilitychange', entry.pageLifecycleHandler);
+    delete extensionState[REGEX_PENDING_CHANGES_LIFECYCLE_HANDLER_KEY];
 }
 
 function installRegexQuickOperationMutationObserver() {
@@ -3874,31 +3936,44 @@ function buildRegexVueListModel(scriptType) {
         groupsById.set(group.id, group);
     }
 
+    const pendingAssignment = {
+        id: REGEX_PENDING_ASSIGNMENT_GROUP_ID,
+        name: '',
+        collapsed: false,
+        isUngrouped: false,
+        isPendingAssignment: true,
+        scripts: [],
+    };
+
     const ungrouped = {
         id: REGEX_UNGROUPED_GROUP_ID,
         name: groupState.ungrouped?.name || t`Ungrouped`,
         collapsed: Boolean(groupState.ungrouped?.collapsed),
         isUngrouped: true,
+        isPendingAssignment: false,
         scripts: [],
     };
 
     for (let index = 0; index < scripts.length; index++) {
         const script = scripts[index];
         const meta = groupState.scripts?.[script?.id] ?? {};
-        const targetGroup = groupsById.get(meta.groupId) ?? ungrouped;
+        const targetGroup = meta.groupId === REGEX_PENDING_ASSIGNMENT_GROUP_ID
+            ? pendingAssignment
+            : groupsById.get(meta.groupId) ?? ungrouped;
         targetGroup.scripts.push({
             script,
             order: Number.isFinite(Number(meta.order)) ? Number(meta.order) : index,
         });
     }
 
-    const groups = [...realGroups, ungrouped]
+    const groups = [pendingAssignment, ...realGroups, ungrouped]
         .map(group => ({
             ...group,
             scripts: group.scripts
                 .sort((a, b) => a.order - b.order)
                 .map(item => item.script),
         }))
+        .filter(group => !group.isPendingAssignment || group.scripts.length > 0)
         .filter(group => !group.isUngrouped || group.scripts.length > 0 || realGroups.length === 0);
 
     return {
@@ -3931,7 +4006,7 @@ function renderRegexVueTeleport(h, vueDraggableNext, Teleport, Transition, model
 
 function renderRegexVueList(h, vueDraggableNext, Transition, model, typeKey) {
     const list = model.lists[typeKey];
-    const hasRealGroups = list.groups.some(group => !group.isUngrouped);
+    const hasRealGroups = list.groups.some(group => !group.isUngrouped && !group.isPendingAssignment);
     const scriptCount = list.groups.reduce((count, group) => count + group.scripts.length, 0);
     const children = [
         renderRegexVueListToolbar(h, list),
@@ -3942,7 +4017,7 @@ function renderRegexVueList(h, vueDraggableNext, Transition, model, typeKey) {
     }
 
     const groupChildren = list.groups.map(group => {
-        const showGroupHeader = !group.isUngrouped || hasRealGroups;
+        const showGroupHeader = !group.isPendingAssignment && (!group.isUngrouped || hasRealGroups);
         const groupChildren = [];
 
         if (showGroupHeader) {
@@ -3956,6 +4031,7 @@ function renderRegexVueList(h, vueDraggableNext, Transition, model, typeKey) {
                 'bai-bai-regex-group',
                 showGroupHeader ? 'bai-bai-regex-group-framed' : '',
                 group.isUngrouped ? 'bai-bai-regex-group-ungrouped' : '',
+                group.isPendingAssignment ? 'bai-bai-regex-group-pending-assignment' : '',
             ],
             'data-regex-group-id': group.id,
             key: group.id,
@@ -4489,7 +4565,7 @@ function installRegexVueManagerStyle() {
 }
 
 .bai-bai-regex-group-title {
-    align-items: center;
+    align-items: end;
     gap: 4px;
     min-width: 0;
 }
@@ -4627,7 +4703,7 @@ function getRegexGroupStateForScriptType(scriptType) {
 
 function normalizeRegexGroupState(groupState) {
     groupState.groups = groupState.groups
-        .filter(group => group && typeof group === 'object' && group.id && group.id !== REGEX_UNGROUPED_GROUP_ID)
+        .filter(group => group && typeof group === 'object' && group.id && group.id !== REGEX_UNGROUPED_GROUP_ID && group.id !== REGEX_PENDING_ASSIGNMENT_GROUP_ID)
         .map((group, index) => {
             return {
                 id: String(group.id),
@@ -5395,7 +5471,7 @@ async function openOptimizedRegexEditorWithScript(scriptType, script) {
     try {
         await saveRegexScriptList(scriptType, scripts);
         allowRegexScriptTypeAfterEditSave(scriptType);
-        ensureRegexScriptGroupMeta(scriptType, updatedScript.id);
+        ensureRegexScriptGroupMeta(scriptType, updatedScript.id, { pendingAssignment: existingIndex === -1 });
         saveRegexGroupSettings();
         await syncRegexVueManagerAfterDataChange();
         queueRegexChatReloadAfterPanelClose();
@@ -5416,7 +5492,7 @@ async function openOptimizedRegexEditorWithScript(scriptType, script) {
     }
 }
 
-function ensureRegexScriptGroupMeta(scriptType, scriptId) {
+function ensureRegexScriptGroupMeta(scriptType, scriptId, { pendingAssignment = false } = {}) {
     if (!scriptId) {
         return;
     }
@@ -5426,7 +5502,7 @@ function ensureRegexScriptGroupMeta(scriptType, scriptId) {
 
     if (!existingMeta || typeof existingMeta !== 'object') {
         groupState.scripts[scriptId] = {
-            groupId: REGEX_UNGROUPED_GROUP_ID,
+            groupId: pendingAssignment ? REGEX_PENDING_ASSIGNMENT_GROUP_ID : REGEX_UNGROUPED_GROUP_ID,
             order: Object.keys(groupState.scripts).length,
         };
         return;
@@ -6301,7 +6377,11 @@ async function saveRegexScriptsOrderFromModel(typeKey) {
 
     for (const group of list.groups) {
         let order = 0;
-        const groupId = group.isUngrouped ? REGEX_UNGROUPED_GROUP_ID : group.id;
+        const groupId = group.isPendingAssignment
+            ? REGEX_PENDING_ASSIGNMENT_GROUP_ID
+            : group.isUngrouped
+                ? REGEX_UNGROUPED_GROUP_ID
+                : group.id;
 
         for (const script of group.scripts) {
             if (!script?.id || !scriptIds.has(script.id) || seen.has(script.id)) {
@@ -6673,7 +6753,7 @@ async function flushPendingRegexChanges() {
 
             if (shouldSaveSettings) {
                 extension_settings[SETTINGS_KEY].regexListGroups = settings.regexListGroups;
-                saveSettingsDebounced();
+                await saveSettings();
             }
         } catch (error) {
             if (!state.pendingRegexScriptSaves || !(state.pendingRegexScriptSaves instanceof Map)) {
