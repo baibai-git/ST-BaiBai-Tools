@@ -35,7 +35,7 @@ const LONG_CHAT_DOM_RENDER_MESSAGE_COUNT_THRESHOLD = 20;
 const LONG_CHAT_DOM_RENDER_SCROLL_BOTTOM_SETTLE_MS = 900;
 const LONG_CHAT_DOM_RENDER_SCROLL_BOTTOM_STABLE_FRAMES = 6;
 const LONG_CHAT_DOM_RENDER_SCROLL_BOTTOM_TOLERANCE = 8;
-const LONG_CHAT_DOM_RENDER_UNCONTAINED_TAIL_MESSAGES = 3;
+const LONG_CHAT_DOM_RENDER_UNCONTAINED_TAIL_MESSAGES = 4;
 const LONG_CHAT_DOM_RENDER_GENERATION_ANCHOR_RELEASE_MS = 1200;
 const LONG_CHAT_DOM_RENDER_BOTTOM_ANCHOR_CLASS = 'bai-bai-toolkit-long-chat-bottom-anchor';
 const LONG_CHAT_DOM_RENDER_BOTTOM_ANCHORED_CLASS = 'bai-bai-toolkit-long-chat-bottom-anchored';
@@ -327,6 +327,10 @@ function installLongChatDomRenderOptimization() {
             scheduleLongChatDomRenderRefresh({ autoScroll: false, reason: 'chat-update' });
             scheduleLongChatDomRenderGenerationAnchor('chat-update');
         };
+        const messageDeletedHandler = () => {
+            pruneLongChatDomRenderCurrentChatHeightCache();
+            chatMutationHandler();
+        };
         const generationStartedHandler = () => {
             state.generationActive = true;
             state.generationAnchorEnabled = shouldStartLongChatDomRenderGenerationAnchor();
@@ -347,7 +351,7 @@ function installLongChatDomRenderOptimization() {
         addLongChatDomRenderEventHandler(event_types.USER_MESSAGE_RENDERED, chatMutationHandler);
         addLongChatDomRenderEventHandler(event_types.CHARACTER_MESSAGE_RENDERED, chatMutationHandler);
         addLongChatDomRenderEventHandler(event_types.MESSAGE_UPDATED, chatMutationHandler);
-        addLongChatDomRenderEventHandler(event_types.MESSAGE_DELETED, chatMutationHandler);
+        addLongChatDomRenderEventHandler(event_types.MESSAGE_DELETED, messageDeletedHandler);
         addLongChatDomRenderEventHandler(event_types.GENERATION_STARTED, generationStartedHandler);
         addLongChatDomRenderEventHandler(event_types.GENERATION_STOPPED, generationEndedHandler);
         addLongChatDomRenderEventHandler(event_types.GENERATION_ENDED, generationEndedHandler);
@@ -530,6 +534,7 @@ function refreshLongChatDomRenderOptimization({ reason = '' } = {}) {
         tail: 0,
         cached: 0,
         estimated: 0,
+        measured: 0,
     };
 
     ensureLongChatDomRenderObservers();
@@ -594,12 +599,17 @@ function applyLongChatDomRenderToMessage(element, chat, refreshStats = null, opt
     const index = Number(mesId);
     const message = Number.isInteger(index) ? chat[index] : null;
     const chars = getLongChatMessageTextLength(message);
+    const measuredHeight = element.classList.contains('bai-bai-toolkit-long-chat-contained')
+        ? 0
+        : measureLongChatDomRenderMessageHeight(element);
     const cachedHeight = getLongChatDomRenderCachedHeight(mesId);
     const estimatedHeight = estimateLongChatDomRenderMessageHeight(chars, options.chatWidth);
-    const height = Math.max(cachedHeight || 0, estimatedHeight);
+    const height = measuredHeight || cachedHeight || estimatedHeight;
 
     if (refreshStats) {
-        if (cachedHeight) {
+        if (measuredHeight) {
+            refreshStats.measured += 1;
+        } else if (cachedHeight) {
             refreshStats.cached += 1;
         } else {
             refreshStats.estimated += 1;
@@ -663,6 +673,17 @@ function estimateLongChatDomRenderMessageHeight(chars, width = window.innerWidth
     return Math.max(120, Math.min(12000, estimated));
 }
 
+function measureLongChatDomRenderMessageHeight(element) {
+    if (!(element instanceof HTMLElement)) {
+        return 0;
+    }
+
+    const rectHeight = Number(element.getBoundingClientRect?.().height || 0);
+    const height = Math.max(rectHeight, Number(element.offsetHeight || 0));
+
+    return height >= 24 ? Math.round(height) : 0;
+}
+
 function updateLongChatDomRenderHeightCache(target, observedHeight) {
     if (!(target instanceof HTMLElement) || !target.classList.contains('mes')) {
         return;
@@ -685,25 +706,70 @@ function isLongChatDomRenderNearViewport(element) {
 }
 
 function getLongChatDomRenderCachedHeight(mesId) {
-    if (!mesId) {
+    const key = getLongChatDomRenderHeightCacheKey(mesId);
+    if (!key) {
         return 0;
     }
 
     const state = getLongChatDomRenderState();
-    return Number(state.heightCache.get(String(mesId)) || 0);
+    return Number(state.heightCache.get(key) || 0);
 }
 
 function setLongChatDomRenderCachedHeight(mesId, height) {
-    if (!mesId || !Number.isFinite(height) || height <= 0) {
+    const key = getLongChatDomRenderHeightCacheKey(mesId);
+    if (!key || !Number.isFinite(height) || height <= 0) {
         return;
     }
 
     const state = getLongChatDomRenderState();
-    state.heightCache.set(String(mesId), Math.round(height));
+    state.heightCache.set(key, Math.round(height));
 
     while (state.heightCache.size > 1000) {
         const oldestKey = state.heightCache.keys().next().value;
         state.heightCache.delete(oldestKey);
+    }
+}
+
+function getLongChatDomRenderHeightCacheKey(mesId) {
+    if (mesId === undefined || mesId === null || String(mesId) === '') {
+        return '';
+    }
+
+    const chatId = getCurrentChatId?.();
+    if (chatId === undefined || chatId === null || String(chatId) === '') {
+        return '';
+    }
+
+    return `${String(chatId)}::${String(mesId)}`;
+}
+
+function getLongChatDomRenderCurrentChatHeightCachePrefix() {
+    const chatId = getCurrentChatId?.();
+    if (chatId === undefined || chatId === null || String(chatId) === '') {
+        return '';
+    }
+
+    return `${String(chatId)}::`;
+}
+
+function pruneLongChatDomRenderCurrentChatHeightCache() {
+    const state = getLongChatDomRenderState();
+    const prefix = getLongChatDomRenderCurrentChatHeightCachePrefix();
+    const chatLength = Array.isArray(scriptModule.chat) ? scriptModule.chat.length : 0;
+
+    if (!prefix || !Number.isFinite(chatLength)) {
+        return;
+    }
+
+    for (const key of state.heightCache.keys()) {
+        if (!String(key).startsWith(prefix)) {
+            continue;
+        }
+
+        const mesId = Number(String(key).slice(prefix.length));
+        if (!Number.isInteger(mesId) || mesId >= chatLength) {
+            state.heightCache.delete(key);
+        }
     }
 }
 
