@@ -4006,7 +4006,7 @@ function renderRegexVueGroupBody(h, vueDraggableNext, model, list, group) {
         draggable: '.regex-script-label',
         handle: '.bai-bai-regex-script-drag-handle',
         itemKey: 'id',
-        animation: 150,
+        animation: 0,
         forceFallback: true,
         fallbackOnBody: true,
         fallbackClass: 'bai-bai-regex-sortable-fallback',
@@ -4039,12 +4039,16 @@ function renderRegexVueListToolbar(h, list) {
 }
 
 function renderRegexVueGroupHeader(h, list, group) {
+    const scriptCount = group.scripts.length;
+    const enabledCount = group.scripts.filter(script => !Boolean(script?.disabled ?? false)).length;
+    const allDisabled = scriptCount > 0 && enabledCount === 0;
+
     return h('div', {
         class: ['bai-bai-regex-group-header', 'flex-container', 'flexnowrap', group.collapsed ? 'collapsed' : ''],
         key: `header-${group.id}`,
         onClick: (event) => {
             // Prevent collapsing when clicking on buttons inside the header
-            if (event.target.closest('.menu_button')) {
+            if (event.target.closest('.menu_button, .checkbox, input, label')) {
                 return;
             }
             toggleRegexVueGroupCollapsed(list.scriptType, group.id);
@@ -4054,8 +4058,41 @@ function renderRegexVueGroupHeader(h, list, group) {
             class: ['bai-bai-regex-group-toggle fa-solid fa-chevron-down'],
             title: group.collapsed ? t`Expand` : t`Collapse`,
         }),
-        h('strong', { class: 'bai-bai-regex-group-name flex1 overflow-hidden', title: group.name }, group.name),
-        h('small', { class: 'bai-bai-regex-group-count' }, String(group.scripts.length)),
+        h('div', { class: 'bai-bai-regex-group-title flex-container flex1 overflow-hidden' }, [
+            h('strong', { class: 'bai-bai-regex-group-name overflow-hidden', title: group.name }, group.name),
+            h('small', { class: 'bai-bai-regex-group-count' }, String(group.scripts.length)),
+        ]),
+        h('label', {
+            class: 'checkbox flex-container margin-r5',
+            title: allDisabled ? t`Enable all scripts in group` : t`Disable all scripts in group`,
+            onClick: event => event.stopPropagation(),
+        }, [
+            h('input', {
+                type: 'checkbox',
+                class: 'disable_regex',
+                checked: allDisabled,
+                disabled: scriptCount === 0,
+                onChange: event => void setRegexVueGroupScriptsDisabled(list.scriptType, group.id, Boolean(event.target?.checked)),
+            }),
+            h('span', {
+                class: 'regex-toggle-on fa-solid fa-toggle-on',
+                title: t`Disable all scripts in group`,
+                onClick: event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void setRegexVueGroupScriptsDisabled(list.scriptType, group.id, true);
+                },
+            }),
+            h('span', {
+                class: 'regex-toggle-off fa-solid fa-toggle-off',
+                title: t`Enable all scripts in group`,
+                onClick: event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void setRegexVueGroupScriptsDisabled(list.scriptType, group.id, false);
+                },
+            }),
+        ]),
         h('div', {
             class: 'menu_button fa-solid fa-pencil',
             title: t`Rename group`,
@@ -4405,7 +4442,7 @@ function installRegexVueManagerStyle() {
 
 .bai-bai-regex-group-framed .bai-bai-regex-group-body {
     padding: 0;
-    overflow: hidden;
+    min-height: 8px;
     border-bottom-left-radius: 10px;
     border-bottom-right-radius: 10px;
 }
@@ -4449,6 +4486,23 @@ function installRegexVueManagerStyle() {
     text-align: center;
     transition: transform 0.2s ease;
     display: inline-block;
+}
+
+.bai-bai-regex-group-title {
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+
+.bai-bai-regex-group-name {
+    min-width: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.bai-bai-regex-group-count {
+    flex: 0 0 auto;
+    opacity: 0.75;
 }
 
 .bai-bai-regex-group-header.collapsed .bai-bai-regex-group-toggle {
@@ -4661,18 +4715,58 @@ async function renameRegexVueGroup(scriptType, groupId) {
 }
 
 async function deleteRegexVueGroup(scriptType, groupId) {
-    const confirm = await callGenericPopup(t`Delete this regex group? Scripts in this group will be moved to Ungrouped.`, POPUP_TYPE.CONFIRM);
+    if (groupId === REGEX_UNGROUPED_GROUP_ID) {
+        return;
+    }
 
-    if (!confirm) {
+    const result = await callGenericPopup('要删除这个正则分组吗？\n\n选择“否”会把组内正则移动到默认组。\n选择“是”会连同组内正则一起删除。', POPUP_TYPE.CONFIRM, '', {
+        okButton: '是',
+        cancelButton: '取消',
+        defaultResult: POPUP_RESULT.NEGATIVE,
+        customButtons: [
+            {
+                text: '否',
+                result: POPUP_RESULT.CUSTOM1,
+            },
+        ],
+    });
+
+    if (result !== POPUP_RESULT.AFFIRMATIVE && result !== POPUP_RESULT.CUSTOM1) {
         return;
     }
 
     const groupState = getRegexGroupStateForScriptType(scriptType);
+    const shouldDeleteScripts = result === POPUP_RESULT.AFFIRMATIVE;
+
     groupState.groups = groupState.groups.filter(group => group.id !== groupId);
 
-    for (const meta of Object.values(groupState.scripts)) {
-        if (meta?.groupId === groupId) {
-            meta.groupId = REGEX_UNGROUPED_GROUP_ID;
+    if (shouldDeleteScripts) {
+        const scripts = getRegexScriptsByType(scriptType);
+        const removedScriptIds = new Set();
+
+        for (let index = scripts.length - 1; index >= 0; index--) {
+            const scriptId = scripts[index]?.id;
+
+            if (groupState.scripts?.[scriptId]?.groupId === groupId) {
+                removedScriptIds.add(scriptId);
+                scripts.splice(index, 1);
+            }
+        }
+
+        for (const scriptId of removedScriptIds) {
+            delete groupState.scripts[scriptId];
+            delete getRegexVueManagerState().state?.selectedIds?.[scriptId];
+        }
+
+        if (removedScriptIds.size > 0) {
+            await saveRegexScriptList(scriptType, scripts);
+            queueRegexChatReloadAfterPanelClose();
+        }
+    } else {
+        for (const meta of Object.values(groupState.scripts)) {
+            if (meta?.groupId === groupId) {
+                meta.groupId = REGEX_UNGROUPED_GROUP_ID;
+            }
         }
     }
 
@@ -4812,6 +4906,10 @@ async function setRegexVueScriptDisabled(scriptType, scriptId, disabled) {
     const previousDisabled = Boolean(context.script.disabled ?? false);
     const previousModelDisabled = modelScript ? Boolean(modelScript.disabled ?? false) : previousDisabled;
 
+    if (previousModelDisabled === disabled) {
+        return;
+    }
+
     if (modelScript) {
         modelScript.disabled = disabled;
     } else {
@@ -4830,6 +4928,42 @@ async function setRegexVueScriptDisabled(scriptType, scriptId, disabled) {
         }
 
         console.debug(`${LOG_PREFIX} Failed to save regex script toggle`, error);
+        toastr.error(t`Failed to save regex script state. See console for details.`);
+    }
+}
+
+async function setRegexVueGroupScriptsDisabled(scriptType, groupId, disabled) {
+    const manager = getRegexVueManagerState();
+    const typeKey = getRegexScriptTypeKey(scriptType);
+    const group = manager.state?.lists?.[typeKey]?.groups?.find(item => item.id === groupId);
+
+    if (!group || group.scripts.length === 0) {
+        return;
+    }
+
+    const scripts = getRegexScriptsByType(scriptType);
+    const changedScripts = group.scripts.filter(script => script?.id && Boolean(script.disabled ?? false) !== disabled);
+
+    if (changedScripts.length === 0) {
+        return;
+    }
+
+    const previousValues = new Map(changedScripts.map(script => [script.id, Boolean(script.disabled ?? false)]));
+
+    for (const script of changedScripts) {
+        script.disabled = disabled;
+    }
+
+    try {
+        await saveRegexScriptList(scriptType, scripts);
+        allowRegexScriptTypeAfterEditSave(scriptType);
+        queueRegexChatReloadAfterPanelClose();
+    } catch (error) {
+        for (const script of changedScripts) {
+            script.disabled = previousValues.get(script.id) ?? Boolean(script.disabled ?? false);
+        }
+
+        console.debug(`${LOG_PREFIX} Failed to save regex group script state`, error);
         toastr.error(t`Failed to save regex script state. See console for details.`);
     }
 }
