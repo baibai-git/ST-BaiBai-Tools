@@ -34,7 +34,7 @@ const FAST_SETTINGS_BOOTSTRAP_FETCH_KEY = '__baiBaiToolkitFastSettingsBootstrapF
 const FAST_CHARACTER_LIST_FETCH_KEY = '__baiBaiToolkitFastCharacterListFetchPatched';
 const BAIBAOKU_EARLY_BRIDGE_KEY = '__baibaokuEarlyBridge';
 const BAIBAOKU_STATUS_URL = '/api/plugins/baibaoku/v1/status';
-const BAIBAOKU_SETTINGS_FAST_CONFIG_URL = '/api/plugins/baibaoku/v1/settings/fast-config';
+const BAIBAOKU_FAST_CONFIG_URL = '/api/plugins/baibaoku/v1/fast-config';
 const BAIBAOKU_STATUS_TIMEOUT_MS = 3000;
 const SAVE_REQUEST_GZIP_FETCH_KEY = '__baiBaiToolkitSaveRequestGzipFetchPatched';
 const PERFORMANCE_TRACE_FETCH_KEY = '__baiBaiToolkitPerformanceTraceFetchPatched';
@@ -241,6 +241,7 @@ const legacySettingsKeys = [
     'imeCommitOptimizationEnabled',
     'mobileChatEntryKeyboardSuppressionEnabled',
     'fastSettingsBootstrapEnabled',
+    'fastCharacterListEnabled',
 ];
 const settings = { ...defaultSettings };
 const extensionState = getExtensionState();
@@ -269,7 +270,7 @@ if (!extensionState.installed) {
 }
 
 disableFastSettingsBootstrapFetchHook();
-installFastCharacterListFetchHook();
+disableFastCharacterListFetchHook();
 installSaveRequestGzipFetchHook();
 installPerformanceTraceFetchHook();
 chatOptimizations.observeChatManagementPopupCleanup();
@@ -356,7 +357,7 @@ async function setBaibaokuSettingsAccelerationEnabled(enabled) {
     }
 
     try {
-        const saved = await saveBaibaokuSettingsFastConfig({ settingsAccelerationEnabled: next });
+        const saved = await saveBaibaokuFastConfig({ settingsAccelerationEnabled: next });
         const savedEnabled = saved.settingsAccelerationEnabled !== false;
         settings.baibaokuSettingsAccelerationEnabled = savedEnabled;
         if (typeof bridge?.setSettingsAccelerationEnabled === 'function') {
@@ -376,6 +377,39 @@ async function setBaibaokuSettingsAccelerationEnabled(enabled) {
     }
 }
 
+async function setBaibaokuCharacterListAccelerationEnabled(enabled) {
+    const next = Boolean(enabled);
+    const previous = settings.fastCharacterListEnabled !== false;
+    settings.fastCharacterListEnabled = next;
+
+    const bridge = getBaibaokuEarlyBridge();
+    if (typeof bridge?.setCharacterListAccelerationEnabled === 'function') {
+        bridge.setCharacterListAccelerationEnabled(next);
+    } else if (bridge) {
+        bridge.characterListAccelerationEnabled = next;
+    }
+
+    try {
+        const saved = await saveBaibaokuFastConfig({ characterListAccelerationEnabled: next });
+        const savedEnabled = saved.characterListAccelerationEnabled !== false;
+        settings.fastCharacterListEnabled = savedEnabled;
+        if (typeof bridge?.setCharacterListAccelerationEnabled === 'function') {
+            bridge.setCharacterListAccelerationEnabled(savedEnabled);
+        } else if (bridge) {
+            bridge.characterListAccelerationEnabled = savedEnabled;
+        }
+        return saved;
+    } catch (error) {
+        settings.fastCharacterListEnabled = previous;
+        if (typeof bridge?.setCharacterListAccelerationEnabled === 'function') {
+            bridge.setCharacterListAccelerationEnabled(previous);
+        } else if (bridge) {
+            bridge.characterListAccelerationEnabled = previous;
+        }
+        throw error;
+    }
+}
+
 function normalizeMessageEditClickSettings() {
     if (settings.messageDoubleClickEditEnabled && settings.messageTripleClickEditEnabled) {
         settings.messageDoubleClickEditEnabled = false;
@@ -389,8 +423,10 @@ function normalizeMessageEditClickSettings() {
 function saveExtensionSettings() {
     const persistedSettings = { ...settings };
     delete persistedSettings.baibaokuSettingsAccelerationEnabled;
+    delete persistedSettings.fastCharacterListEnabled;
     Object.assign(extension_settings[SETTINGS_KEY], persistedSettings);
     delete extension_settings[SETTINGS_KEY].baibaokuSettingsAccelerationEnabled;
+    delete extension_settings[SETTINGS_KEY].fastCharacterListEnabled;
     saveSettingsDebounced();
 }
 
@@ -1940,9 +1976,18 @@ async function renderSettingsPanel() {
 
     $('#bai_bai_toolkit_fast_character_list_enabled')
         .prop('checked', settings.fastCharacterListEnabled)
-        .on('input', function () {
-            settings.fastCharacterListEnabled = Boolean($(this).prop('checked'));
-            saveExtensionSettings();
+        .on('input', async function () {
+            const checkbox = $(this);
+            checkbox.prop('disabled', true);
+            try {
+                await setBaibaokuCharacterListAccelerationEnabled(Boolean(checkbox.prop('checked')));
+            } catch (error) {
+                console.debug(`${LOG_PREFIX} Failed to save BaiBaoKu character list acceleration config`, error);
+                checkbox.prop('checked', settings.fastCharacterListEnabled !== false);
+            } finally {
+                checkbox.prop('disabled', false);
+                refreshBaibaokuPanelStatus(container);
+            }
         });
 
     $('#bai_bai_toolkit_character_list_avatar_lazy_load_enabled')
@@ -2016,6 +2061,7 @@ async function refreshBaibaokuPanelStatus(container) {
     const driverStatus = container.find('#bai_bai_toolkit_baibaoku_driver_status');
     const bridgeStatus = container.find('#bai_bai_toolkit_baibaoku_bridge_status');
     const accelerationToggle = container.find('#bai_bai_toolkit_baibaoku_settings_acceleration_enabled');
+    const characterListToggle = container.find('#bai_bai_toolkit_fast_character_list_enabled');
     const bridge = getBaibaokuEarlyBridge();
 
     updateBaibaokuStatusText(bridgeStatus, bridge?.installed
@@ -2030,6 +2076,14 @@ async function refreshBaibaokuPanelStatus(container) {
         accelerationToggle.prop('checked', bridgeEnabled);
     }
 
+    const bridgeCharacterListEnabled = typeof bridge?.isCharacterListAccelerationEnabled === 'function'
+        ? bridge.isCharacterListAccelerationEnabled()
+        : null;
+    if (typeof bridgeCharacterListEnabled === 'boolean') {
+        settings.fastCharacterListEnabled = bridgeCharacterListEnabled;
+        characterListToggle.prop('checked', bridgeCharacterListEnabled);
+    }
+
     updateBaibaokuStatusText(serverStatus, '检测中', null);
     updateBaibaokuStatusText(driverStatus, '检测中', null);
 
@@ -2042,17 +2096,25 @@ async function refreshBaibaokuPanelStatus(container) {
             : '不可用', Boolean(driver?.available));
 
         try {
-            const config = await fetchBaibaokuSettingsFastConfig();
-            const enabled = config.settingsAccelerationEnabled !== false;
-            settings.baibaokuSettingsAccelerationEnabled = enabled;
-            accelerationToggle.prop('checked', enabled);
+            const config = await fetchBaibaokuFastConfig();
+            const settingsEnabled = config.settingsAccelerationEnabled !== false;
+            const characterListEnabled = config.characterListAccelerationEnabled !== false;
+            settings.baibaokuSettingsAccelerationEnabled = settingsEnabled;
+            settings.fastCharacterListEnabled = characterListEnabled;
+            accelerationToggle.prop('checked', settingsEnabled);
+            characterListToggle.prop('checked', characterListEnabled);
             if (typeof bridge?.setSettingsAccelerationEnabled === 'function') {
-                bridge.setSettingsAccelerationEnabled(enabled);
+                bridge.setSettingsAccelerationEnabled(settingsEnabled);
             } else if (bridge) {
-                bridge.settingsAccelerationEnabled = enabled;
+                bridge.settingsAccelerationEnabled = settingsEnabled;
+            }
+            if (typeof bridge?.setCharacterListAccelerationEnabled === 'function') {
+                bridge.setCharacterListAccelerationEnabled(characterListEnabled);
+            } else if (bridge) {
+                bridge.characterListAccelerationEnabled = characterListEnabled;
             }
         } catch (error) {
-            console.debug(`${LOG_PREFIX} Failed to read BaiBaoKu settings acceleration config`, error);
+            console.debug(`${LOG_PREFIX} Failed to read BaiBaoKu fast config`, error);
         }
     } catch {
         updateBaibaokuStatusText(serverStatus, '未连接', false);
@@ -2082,8 +2144,8 @@ async function fetchBaibaokuStatus() {
     }
 }
 
-async function fetchBaibaokuSettingsFastConfig() {
-    const response = await fetch(BAIBAOKU_SETTINGS_FAST_CONFIG_URL, {
+async function fetchBaibaokuFastConfig() {
+    const response = await fetch(BAIBAOKU_FAST_CONFIG_URL, {
         method: 'GET',
         cache: 'no-store',
     });
@@ -2096,13 +2158,13 @@ async function fetchBaibaokuSettingsFastConfig() {
     return payload.data || {};
 }
 
-async function saveBaibaokuSettingsFastConfig(config) {
+async function saveBaibaokuFastConfig(config) {
     const headers = new Headers(getRequestHeaders());
     if (!headers.has('content-type')) {
         headers.set('content-type', 'application/json');
     }
 
-    const response = await fetch(BAIBAOKU_SETTINGS_FAST_CONFIG_URL, {
+    const response = await fetch(BAIBAOKU_FAST_CONFIG_URL, {
         method: 'POST',
         headers,
         cache: 'no-store',
@@ -9228,7 +9290,7 @@ async function fetchFastSettingsBootstrapText(fetchFn, input, init) {
 function installFastCharacterListFetchHook() {
     const existing = globalThis[FAST_CHARACTER_LIST_FETCH_KEY];
     if (existing?.wrappedFetch) {
-        existing.isEnabled = () => settings.fastCharacterListEnabled !== false;
+        existing.isEnabled = () => false;
         return existing;
     }
 
@@ -9241,7 +9303,7 @@ function installFastCharacterListFetchHook() {
     const state = {
         originalFetch: originalFetch.bind(globalThis),
         wrappedFetch: null,
-        isEnabled: () => settings.fastCharacterListEnabled !== false,
+        isEnabled: () => false,
     };
 
     state.wrappedFetch = async function baiBaiToolkitFastCharacterListFetch(input, init) {
@@ -9265,6 +9327,20 @@ function installFastCharacterListFetchHook() {
     globalThis[FAST_CHARACTER_LIST_FETCH_KEY] = state;
     globalThis.fetch = state.wrappedFetch;
     return state;
+}
+
+function disableFastCharacterListFetchHook() {
+    const existing = globalThis[FAST_CHARACTER_LIST_FETCH_KEY];
+
+    if (!existing?.wrappedFetch) {
+        return;
+    }
+
+    existing.isEnabled = () => false;
+
+    if (globalThis.fetch === existing.wrappedFetch && typeof existing.originalFetch === 'function') {
+        globalThis.fetch = existing.originalFetch;
+    }
 }
 
 async function isFastCharacterListRequest(input, init) {
