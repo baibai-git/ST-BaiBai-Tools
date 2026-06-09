@@ -263,6 +263,12 @@ const defaultSettings = {
     chatDeleteEditFlowOptimizationEnabled: true,
     messageDoubleClickEditEnabled: false,
     messageTripleClickEditEnabled: true,
+    messageCompletionSoundEnabled: false,
+    messageCompletionSoundSource: 'builtin',
+    messageCompletionSoundBuiltinId: 'guoke-bell',
+    messageCompletionSoundUrl: '',
+    messageCompletionSoundVolume: 0.8,
+    messageCompletionSoundLocalFileName: '',
 };
 const legacySettingsKeys = [
     'textareaScrollOptimizationEnabled',
@@ -2581,6 +2587,7 @@ function applyFeatureSettings() {
     chatOptimizations.applyMobileAutoKeyboardSuppression();
     chatOptimizations.applyMobileMessageEditScrollGuard();
     chatOptimizations.applyMessageTripleClickEdit();
+    chatOptimizations.applyMessageCompletionSound();
 }
 
 function applyCustomCssInputOptimization() {
