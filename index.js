@@ -9538,7 +9538,7 @@ function notifyFastChatGetBlocked() {
 
     state.lastNoticeAt = now;
     if (globalThis.toastr?.info) {
-        globalThis.toastr.info('聊天记录正在补全，请稍候再操作。', '柏宝库');
+        globalThis.toastr.info('剩余批次还未加载完成，先不要进行操作', '长聊天分批加载:');
     }
 }
 
@@ -9564,7 +9564,7 @@ function installFastChatGetFetchHook() {
         try {
             if (isFastChatGetSaveRequest(input, init) && isFastChatGetHydrating()) {
                 notifyFastChatGetBlocked();
-                return buildFastChatGetBlockedResponse();
+                return buildFastChatGetSkippedSaveResponse();
             }
 
             if (!state.isEnabled()) {
@@ -9926,13 +9926,15 @@ function buildFastChatGetArrayResponse(chat) {
     });
 }
 
-function buildFastChatGetBlockedResponse() {
+function buildFastChatGetSkippedSaveResponse() {
     return new Response(JSON.stringify({
-        error: true,
+        ok: true,
+        skipped: true,
+        reason: 'hydrating',
         message: 'Chat is still hydrating. Please wait for the full chat to load.',
     }), {
-        status: 409,
-        statusText: 'Conflict',
+        status: 200,
+        statusText: 'OK',
         headers: {
             'Content-Type': 'application/json',
         },
