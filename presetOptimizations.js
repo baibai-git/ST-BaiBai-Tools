@@ -1,5 +1,6 @@
 import { event_types, eventSource, getRequestHeaders, saveSettingsDebounced } from '../../../../script.js';
 import { oai_settings, openai_setting_names, promptManager } from '../../../openai.js';
+import { getTokenizerModel } from '../../../tokenizers.js';
 import { t } from '../../../i18n.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
 import { INJECTION_POSITION } from '../../../PromptManager.js';
@@ -15,6 +16,7 @@ const PRESET_DRAG_HANDLER_KEY = '__baiBaiToolkitPresetDragHandler';
 const PRESET_DRAG_PATCH_KEY = '__baiBaiToolkitPresetDragPatch';
 const PRESET_SWITCH_BEFORE_HANDLER_KEY = '__baiBaiToolkitPresetSwitchBeforeHandler';
 const PRESET_SWITCH_HANDLER_KEY = '__baiBaiToolkitPresetSwitchHandler';
+const PRESET_MODEL_CHANGE_HANDLER_KEY = '__baiBaiToolkitPresetModelChangeHandler';
 const PRESET_SELECT_CHANGE_HANDLER_KEY = '__baiBaiToolkitPresetSelectChangeHandler';
 const PRESET_DELETE_HANDLER_KEY = '__baiBaiToolkitPresetDeleteHandler';
 const PRESET_LIST_ACTION_HANDLER_KEY = '__baiBaiToolkitPresetListActionHandler';
@@ -39,6 +41,7 @@ const PRESET_PROMPT_SOURCE_HIDDEN_CLASS = 'bai-bai-toolkit-preset-prompt-source-
 const PRESET_PROMPT_CODEMIRROR_READONLY_CLASS = 'bai-bai-toolkit-preset-prompt-readonly';
 const PRESET_PROMPT_CODEMIRROR_MAXIMIZED_CLASS = 'bai-bai-toolkit-preset-prompt-maximized';
 const PRESET_DRAG_INTERACTIVE_SELECTOR = '.prompt_manager_prompt_controls, .prompt-manager-detach-action, .prompt-manager-inspect-action, .prompt-manager-edit-action, .prompt-manager-toggle-action, a, button, input, select, textarea, [contenteditable="true"]';
+const BAIBAOKU_TOKENIZER_BULK_COUNT_URL = '/api/plugins/baibaoku/v1/tokenizers/bulk-count';
 const PRESET_DRAG_READY_CLASS = 'bai-bai-toolkit-preset-drag-ready';
 const PRESET_DRAG_ACTIVE_CLASS = 'bai-bai-toolkit-preset-drag-active';
 const PRESET_DRAG_SOURCE_CLASS = 'bai-bai-toolkit-preset-drag-source';
@@ -1184,6 +1187,7 @@ function applyPresetSwitchOptimization() {
     applyPresetDeleteSelectionOptimization();
     applyPresetListActionDelegation();
     applyPresetSwitchBeforeOptimization();
+    applyPresetModelChangeTokenRefreshOptimization();
 
     if (extensionState[PRESET_SWITCH_HANDLER_KEY]) {
         return;
@@ -1199,6 +1203,39 @@ function applyPresetSwitchOptimization() {
         eventSource.makeFirst(event_types.OAI_PRESET_CHANGED_AFTER, handler);
     } else {
         eventSource.on(event_types.OAI_PRESET_CHANGED_AFTER, handler);
+    }
+}
+
+function applyPresetModelChangeTokenRefreshOptimization() {
+    if (extensionState[PRESET_MODEL_CHANGE_HANDLER_KEY]) {
+        return;
+    }
+
+    const handler = () => {
+        void handleChatCompletionModelChangedForPromptManager();
+    };
+
+    extensionState[PRESET_MODEL_CHANGE_HANDLER_KEY] = handler;
+
+    if (typeof eventSource.makeFirst === 'function') {
+        eventSource.makeFirst(event_types.CHATCOMPLETION_MODEL_CHANGED, handler);
+    } else {
+        eventSource.on(event_types.CHATCOMPLETION_MODEL_CHANGED, handler);
+    }
+}
+
+async function handleChatCompletionModelChangedForPromptManager() {
+    if (!settings.presetSwitchOptimizationEnabled || !isPromptManagerReadyForFastPresetSwitch()) {
+        return;
+    }
+
+    try {
+        suppressPromptManagerDebouncedRenderForCurrentTick();
+        await renderPromptManagerListWithoutTokenStats();
+        markPromptManagerTokensPending();
+        refreshPromptManagerTokensAfterPresetSwitchDebounced();
+    } catch (error) {
+        console.debug(`${LOG_PREFIX} Failed to fast-refresh prompt manager after model change`, error);
     }
 }
 
@@ -1975,12 +2012,108 @@ async function refreshPromptManagerTokens() {
         return;
     }
 
+    let refreshedWithBulkCount = false;
+
+    if (settings.tokenizerBulkCountEnabled !== false) {
+        try {
+            refreshedWithBulkCount = await refreshPromptManagerTokensWithBaibaokuBulkCount();
+        } catch (error) {
+            console.debug(`${LOG_PREFIX} Failed to refresh prompt manager token counts with BaiBaoKu bulk count`, error);
+        }
+    }
+
     try {
-        await promptManager.tryGenerate();
+        if (!refreshedWithBulkCount) {
+            await promptManager.tryGenerate();
+        }
+
         updatePromptManagerTokenDisplay();
     } catch (error) {
         console.debug(`${LOG_PREFIX} Failed to refresh prompt manager token counts`, error);
     }
+}
+
+async function refreshPromptManagerTokensWithBaibaokuBulkCount() {
+    if (!promptManager?.tokenHandler || typeof promptManager.getPromptCollection !== 'function') {
+        return false;
+    }
+
+    const tokenHandler = promptManager.tokenHandler;
+    if (typeof tokenHandler.resetCounts !== 'function' || typeof tokenHandler.getCounts !== 'function') {
+        return false;
+    }
+
+    const promptCollection = promptManager.getPromptCollection('normal');
+    const prompts = Array.isArray(promptCollection?.collection) ? promptCollection.collection : [];
+    const entries = prompts
+        .filter(prompt => prompt?.identifier && typeof prompt.content === 'string' && prompt.content.length > 0)
+        .map(prompt => ({
+            identifier: prompt.identifier,
+            message: {
+                role: prompt.role || 'system',
+                content: prompt.content,
+            },
+        }));
+
+    if (entries.length === 0) {
+        applyPromptManagerTokenCounts([]);
+        return true;
+    }
+
+    const model = getTokenizerModel();
+    const headers = new Headers(getRequestHeaders());
+    headers.set('content-type', 'application/json');
+
+    const response = await fetch(BAIBAOKU_TOKENIZER_BULK_COUNT_URL, {
+        method: 'POST',
+        headers,
+        cache: 'no-store',
+        body: JSON.stringify({
+            model,
+            messages: entries.map(entry => entry.message),
+        }),
+    });
+    const payload = await response.json().catch(() => null);
+    const rawCounts = payload?.data?.counts;
+
+    if (!response.ok || payload?.ok !== true || !Array.isArray(rawCounts) || rawCounts.length !== entries.length) {
+        throw new Error(payload?.error?.message || `BaiBaoKu bulk count failed: HTTP ${response.status}`);
+    }
+
+    applyPromptManagerTokenCounts(entries.map((entry, index) => ({
+        identifier: entry.identifier,
+        tokens: normalizeBulkSingleMessageCount(rawCounts[index], model),
+    })));
+
+    return true;
+}
+
+function applyPromptManagerTokenCounts(entries) {
+    const tokenHandler = promptManager.tokenHandler;
+    tokenHandler.resetCounts();
+
+    const counts = tokenHandler.getCounts();
+    for (const prompt of promptManager.serviceSettings?.prompts || []) {
+        if (prompt?.identifier) {
+            counts[prompt.identifier] = 0;
+        }
+    }
+
+    for (const entry of entries) {
+        counts[entry.identifier] = entry.tokens;
+    }
+
+    promptManager.tokenUsage = typeof tokenHandler.getTotal === 'function' ? tokenHandler.getTotal() : 0;
+}
+
+function normalizeBulkSingleMessageCount(rawCount, model) {
+    const count = Number(rawCount);
+    if (!Number.isFinite(count)) {
+        return 0;
+    }
+
+    const adjustment = model === 'claude' ? 1 : 3;
+    return Math.max(0, count - adjustment);
 }
 
 function isPromptManagerTokenRefreshEnabled() {

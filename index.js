@@ -211,6 +211,7 @@ const defaultSettings = {
     baibaokuSettingsAccelerationEnabled: true,
     fastCharacterListEnabled: true,
     recentChatListAccelerationEnabled: true,
+    tokenizerBulkCountEnabled: true,
     characterListAvatarLazyLoadEnabled: true,
     fastChatListEnabled: true,
     welcomeRecentChatDirectOpenEnabled: true,
@@ -439,6 +440,39 @@ async function setBaibaokuRecentChatListAccelerationEnabled(enabled) {
             bridge.setRecentChatListAccelerationEnabled(previous);
         } else if (bridge) {
             bridge.recentChatListAccelerationEnabled = previous;
+        }
+        throw error;
+    }
+}
+
+async function setBaibaokuTokenizerBulkCountEnabled(enabled) {
+    const next = Boolean(enabled);
+    const previous = settings.tokenizerBulkCountEnabled !== false;
+    settings.tokenizerBulkCountEnabled = next;
+
+    const bridge = getBaibaokuEarlyBridge();
+    if (typeof bridge?.setTokenizerBulkCountEnabled === 'function') {
+        bridge.setTokenizerBulkCountEnabled(next);
+    } else if (bridge) {
+        bridge.tokenizerBulkCountEnabled = next;
+    }
+
+    try {
+        const saved = await saveBaibaokuFastConfig({ tokenizerBulkCountEnabled: next });
+        const savedEnabled = saved.tokenizerBulkCountEnabled !== false;
+        settings.tokenizerBulkCountEnabled = savedEnabled;
+        if (typeof bridge?.setTokenizerBulkCountEnabled === 'function') {
+            bridge.setTokenizerBulkCountEnabled(savedEnabled);
+        } else if (bridge) {
+            bridge.tokenizerBulkCountEnabled = savedEnabled;
+        }
+        return saved;
+    } catch (error) {
+        settings.tokenizerBulkCountEnabled = previous;
+        if (typeof bridge?.setTokenizerBulkCountEnabled === 'function') {
+            bridge.setTokenizerBulkCountEnabled(previous);
+        } else if (bridge) {
+            bridge.tokenizerBulkCountEnabled = previous;
         }
         throw error;
     }
@@ -2042,6 +2076,22 @@ async function renderSettingsPanel() {
             }
         });
 
+    $('#bai_bai_toolkit_tokenizer_bulk_count_enabled')
+        .prop('checked', settings.tokenizerBulkCountEnabled)
+        .on('input', async function () {
+            const checkbox = $(this);
+            checkbox.prop('disabled', true);
+            try {
+                await setBaibaokuTokenizerBulkCountEnabled(Boolean(checkbox.prop('checked')));
+            } catch (error) {
+                console.debug(`${LOG_PREFIX} Failed to save BaiBaoKu tokenizer bulk count config`, error);
+                checkbox.prop('checked', settings.tokenizerBulkCountEnabled !== false);
+            } finally {
+                checkbox.prop('disabled', false);
+                refreshBaibaokuPanelStatus(container);
+            }
+        });
+
     $('#bai_bai_toolkit_character_list_avatar_lazy_load_enabled')
         .prop('checked', settings.characterListAvatarLazyLoadEnabled)
         .on('input', function () {
@@ -2115,6 +2165,7 @@ async function refreshBaibaokuPanelStatus(container) {
     const accelerationToggle = container.find('#bai_bai_toolkit_baibaoku_settings_acceleration_enabled');
     const characterListToggle = container.find('#bai_bai_toolkit_fast_character_list_enabled');
     const recentChatListToggle = container.find('#bai_bai_toolkit_recent_chat_list_acceleration_enabled');
+    const tokenizerBulkCountToggle = container.find('#bai_bai_toolkit_tokenizer_bulk_count_enabled');
     const bridge = getBaibaokuEarlyBridge();
 
     updateBaibaokuStatusText(bridgeStatus, bridge?.installed
@@ -2145,6 +2196,14 @@ async function refreshBaibaokuPanelStatus(container) {
         recentChatListToggle.prop('checked', bridgeRecentChatListEnabled);
     }
 
+    const bridgeTokenizerBulkCountEnabled = typeof bridge?.isTokenizerBulkCountEnabled === 'function'
+        ? bridge.isTokenizerBulkCountEnabled()
+        : null;
+    if (typeof bridgeTokenizerBulkCountEnabled === 'boolean') {
+        settings.tokenizerBulkCountEnabled = bridgeTokenizerBulkCountEnabled;
+        tokenizerBulkCountToggle.prop('checked', bridgeTokenizerBulkCountEnabled);
+    }
+
     updateBaibaokuStatusText(serverStatus, '检测中', null);
     updateBaibaokuStatusText(driverStatus, '检测中', null);
 
@@ -2161,12 +2220,15 @@ async function refreshBaibaokuPanelStatus(container) {
             const settingsEnabled = config.settingsAccelerationEnabled !== false;
             const characterListEnabled = config.characterListAccelerationEnabled !== false;
             const recentChatListEnabled = config.recentChatListAccelerationEnabled !== false;
+            const tokenizerBulkCountEnabled = config.tokenizerBulkCountEnabled !== false;
             settings.baibaokuSettingsAccelerationEnabled = settingsEnabled;
             settings.fastCharacterListEnabled = characterListEnabled;
             settings.recentChatListAccelerationEnabled = recentChatListEnabled;
+            settings.tokenizerBulkCountEnabled = tokenizerBulkCountEnabled;
             accelerationToggle.prop('checked', settingsEnabled);
             characterListToggle.prop('checked', characterListEnabled);
             recentChatListToggle.prop('checked', recentChatListEnabled);
+            tokenizerBulkCountToggle.prop('checked', tokenizerBulkCountEnabled);
             if (typeof bridge?.setSettingsAccelerationEnabled === 'function') {
                 bridge.setSettingsAccelerationEnabled(settingsEnabled);
             } else if (bridge) {
@@ -2181,6 +2243,11 @@ async function refreshBaibaokuPanelStatus(container) {
                 bridge.setRecentChatListAccelerationEnabled(recentChatListEnabled);
             } else if (bridge) {
                 bridge.recentChatListAccelerationEnabled = recentChatListEnabled;
+            }
+            if (typeof bridge?.setTokenizerBulkCountEnabled === 'function') {
+                bridge.setTokenizerBulkCountEnabled(tokenizerBulkCountEnabled);
+            } else if (bridge) {
+                bridge.tokenizerBulkCountEnabled = tokenizerBulkCountEnabled;
             }
         } catch (error) {
             console.debug(`${LOG_PREFIX} Failed to read BaiBaoKu fast config`, error);
