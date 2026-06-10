@@ -27,7 +27,7 @@ import * as presetOptimizations from './presetOptimizations.js';
 
 const LOG_PREFIX = '[柏宝箱]';
 const MODULE_NAME = getModuleName();
-const CURRENT_VERSION = '0.24.9';
+const CURRENT_VERSION = '0.24.10';
 const EXTENSION_ID = getExtensionId();
 const SETTINGS_KEY = 'baiBaiToolkit';
 const EXTENSION_KEY = '__baiBaiToolkitExtensionInstalled';
@@ -10784,7 +10784,7 @@ function findMatchingSaveGenerateRecord(state, saveBody) {
 }
 
 async function waitSaveGenerateJobTerminal(state, record, { onUpdate = null } = {}) {
-    const terminal = new Set(['saved', 'already_saved', 'conflict', 'failed']);
+    const terminal = new Set(['saved', 'already_saved', 'conflict', 'failed', 'canceled']);
     if (terminal.has(record.status)) {
         onUpdate?.({ id: record.id, status: record.status });
         return { id: record.id, status: record.status };
@@ -10824,6 +10824,22 @@ async function fetchSaveGenerateJobStatus(fetchFn, jobId) {
         throw new Error(payload?.message || payload?.error?.message || `HTTP ${response.status}`);
     }
     return payload.data || null;
+}
+
+async function cancelSaveGenerateJob(fetchFn, jobId) {
+    const headers = new Headers(getRequestHeaders());
+    headers.set('Content-Type', 'application/json');
+    const response = await fetchFn(`${BAIBAOKU_SAVE_GENERATE_URL}/${encodeURIComponent(jobId)}/cancel`, {
+        method: 'POST',
+        headers,
+        cache: 'no-store',
+        body: JSON.stringify({ jobId }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || payload?.ok !== true) {
+        throw new Error(payload?.message || payload?.error?.message || `HTTP ${response.status}`);
+    }
+    return payload.data || { id: jobId, status: 'canceled' };
 }
 
 function buildSkippedSaveGenerateSaveResponse(job) {
@@ -11098,7 +11114,10 @@ function updateSaveGenerateResumeDisplay(state, job) {
     let display = state.resumeDisplays.get(job.id);
     if (!display) {
         display = new StreamingDisplay();
-        display.show({ label: getSaveGenerateDisplayLabel(job) });
+        display.show({
+            label: getSaveGenerateDisplayLabel(job),
+            onStop: () => stopSaveGenerateResumeJob(state, job.id),
+        });
         state.resumeDisplays.set(job.id, display);
     } else {
         display.setLabel(getSaveGenerateDisplayLabel(job));
@@ -11124,6 +11143,30 @@ function updateSaveGenerateResumeDisplay(state, job) {
     }
 }
 
+async function stopSaveGenerateResumeJob(state, jobId) {
+    const display = state?.resumeDisplays?.get(jobId);
+    if (!state?.originalFetch || !jobId) {
+        display?.setLabel('柏宝库无法停止后台生成');
+        return;
+    }
+
+    try {
+        display?.setLabel('柏宝库正在停止后台生成...');
+        const canceledJob = await cancelSaveGenerateJob(state.originalFetch, jobId);
+        const job = {
+            id: jobId,
+            ...(canceledJob || {}),
+            status: canceledJob?.status || 'canceled',
+        };
+        markSaveGenerateJobSeen(job);
+        display?.markStopped({ label: getSaveGenerateDisplayLabel(job) });
+        scheduleSaveGenerateDisplayCleanup(state, jobId);
+    } catch (error) {
+        console.debug(`${LOG_PREFIX} save-generate cancel failed`, error);
+        display?.setLabel('柏宝库停止失败，后台生成仍在继续...');
+    }
+}
+
 function scheduleSaveGenerateDisplayCleanup(state, jobId) {
     setTimeout(() => {
         const display = state?.resumeDisplays?.get(jobId);
@@ -11140,6 +11183,9 @@ function getSaveGenerateDisplayLabel(job) {
     }
     if (status === 'failed') {
         return '柏宝库后台生成失败';
+    }
+    if (status === 'canceled') {
+        return '柏宝库后台生成已停止';
     }
     if (status === 'conflict') {
         return '柏宝库已生成内容，但未能自动保存';
@@ -11201,7 +11247,7 @@ function maybeReloadCurrentChatForSaveGenerateJob(job, chatId, reason = 'unknown
 }
 
 function isSaveGenerateTerminalStatus(status) {
-    return ['saved', 'already_saved', 'conflict', 'failed'].includes(String(status || ''));
+    return ['saved', 'already_saved', 'conflict', 'failed', 'canceled'].includes(String(status || ''));
 }
 
 function isSaveGenerateSavedStatus(status) {
