@@ -28,7 +28,7 @@ import * as presetOptimizations from './presetOptimizations.js';
 
 const LOG_PREFIX = '[柏宝箱]';
 const MODULE_NAME = getModuleName();
-const CURRENT_VERSION = '0.24.12';
+const CURRENT_VERSION = '0.24.17';
 const EXTENSION_ID = getExtensionId();
 const SETTINGS_KEY = 'baiBaiToolkit';
 const EXTENSION_KEY = '__baiBaiToolkitExtensionInstalled';
@@ -53,6 +53,8 @@ const SAVE_GENERATE_RESUME_CHECK_COOLDOWN_MS = 1500;
 const SAVE_GENERATE_SEEN_STORAGE_PREFIX = 'bai_bai_toolkit_save_generate_seen';
 const SAVE_GENERATE_DISPLAY_STYLE_ID = 'bai_bai_toolkit_save_generate_display_style';
 const SAVE_GENERATE_DISPLAY_CLASS = 'bai-bai-save-generate-display';
+const SAVE_GENERATE_RECOVERY_BLOCK_SELECTOR = '#send_but, #option_regenerate';
+const SAVE_GENERATE_RECOVERY_BLOCK_TOAST_INTERVAL_MS = 1500;
 const SAVE_REQUEST_GZIP_FETCH_KEY = '__baiBaiToolkitSaveRequestGzipFetchPatched';
 const FAST_CHAT_GET_FETCH_KEY = '__baiBaiToolkitFastChatGetFetchPatched';
 const FAST_CHAT_GET_JQUERY_TRIGGER_GUARD_KEY = '__baiBaiToolkitFastChatGetJQueryTriggerGuardPatched';
@@ -10462,10 +10464,25 @@ function installSaveGenerateFetchHook() {
         if (!(existing.activeGenerateChatIds instanceof Set)) {
             existing.activeGenerateChatIds = new Set();
         }
+        if (!(existing.resumeCheckPromises instanceof Map)) {
+            existing.resumeCheckPromises = new Map();
+        }
+        if (!(existing.recoveryLocks instanceof Map)) {
+            existing.recoveryLocks = new Map();
+        }
+        if (existing.activeSaveGenerateCancelTarget && typeof existing.activeSaveGenerateCancelTarget !== 'object') {
+            existing.activeSaveGenerateCancelTarget = null;
+        }
+        existing.resumeCheckScheduledChatId = String(existing.resumeCheckScheduledChatId || '');
+        existing.resumeCheckScheduledLastMessageHash = String(existing.resumeCheckScheduledLastMessageHash || '');
         existing.resumeCheckInFlightChatId = String(existing.resumeCheckInFlightChatId || '');
         existing.lastResumeCheckChatId = String(existing.lastResumeCheckChatId || '');
         existing.lastResumeCheckAt = Number(existing.lastResumeCheckAt || 0);
+        existing.lastRecoveryBlockToastAt = Number(existing.lastRecoveryBlockToastAt || 0);
+        installSaveGenerateNativeStopHandler(existing);
+        installSaveGenerateRecoveryInputBlocker(existing);
         installSaveGenerateResumeHandlers(existing);
+        refreshSaveGenerateRecoveryUiLock(existing);
         queueSaveGenerateResumeCheck(existing, 'existing-hook', 500);
         return existing;
     }
@@ -10482,10 +10499,18 @@ function installSaveGenerateFetchHook() {
         monitoredJobIds: new Set(),
         resumeDisplays: new Map(),
         activeGenerateChatIds: new Set(),
+        activeSaveGenerateCancelTarget: null,
+        resumeCheckPromises: new Map(),
+        recoveryLocks: new Map(),
         resumeCheckTimer: null,
+        resumeCheckScheduledChatId: '',
+        resumeCheckScheduledLastMessageHash: '',
         resumeCheckInFlightChatId: '',
         lastResumeCheckChatId: '',
         lastResumeCheckAt: 0,
+        lastRecoveryBlockToastAt: 0,
+        nativeStopHandlerInstalled: false,
+        recoveryInputBlockerInstalled: false,
         resumeHandlersInstalled: false,
         isEnabled: () => settings.saveGenerateEnabled === true,
     };
@@ -10506,6 +10531,11 @@ function installSaveGenerateFetchHook() {
                 return state.originalFetch(input, init);
             }
 
+            const recoveryBlockResponse = await maybeBlockSaveGenerateRequestForRecovery(state, requestInfo);
+            if (recoveryBlockResponse) {
+                return recoveryBlockResponse;
+            }
+
             return await fetchSaveGenerate(state, requestInfo, input, init);
         } catch (error) {
             console.debug(`${LOG_PREFIX} save-generate path failed; falling back to native fetch`, error);
@@ -10516,6 +10546,8 @@ function installSaveGenerateFetchHook() {
     state.wrappedFetch[SAVE_GENERATE_FETCH_KEY] = true;
     globalThis[SAVE_GENERATE_FETCH_KEY] = state;
     globalThis.fetch = state.wrappedFetch;
+    installSaveGenerateNativeStopHandler(state);
+    installSaveGenerateRecoveryInputBlocker(state);
     installSaveGenerateResumeHandlers(state);
     queueSaveGenerateResumeCheck(state, 'install', 500);
     console.debug(`${LOG_PREFIX} save-generate fetch hook installed`);
@@ -10658,16 +10690,25 @@ async function fetchSaveGenerate(state, requestInfo, input, init) {
     };
 
     const activeChatId = String(requestInfo.save?.chatId || '').trim();
+    const isStream = requestInfo.body?.stream === true;
+    const cancelTarget = setActiveSaveGenerateCancelTarget(state, {
+        jobId: '',
+        chatId: activeChatId,
+    });
     markSaveGenerateActiveChat(state, activeChatId);
 
     try {
         const response = await state.originalFetch(BAIBAOKU_SAVE_GENERATE_URL, fastInit);
         if (response?.status === 404) {
+            clearActiveSaveGenerateCancelTarget(state, cancelTarget);
             console.debug(`${LOG_PREFIX} save-generate endpoint unavailable; falling back to native generate`);
             return state.originalFetch(input, init);
         }
 
         const jobId = response?.headers?.get(SAVE_GENERATE_JOB_ID_HEADER) || '';
+        if (cancelTarget) {
+            cancelTarget.jobId = jobId;
+        }
         if (jobId && response.ok) {
             console.debug(`${LOG_PREFIX} save-generate intercepted ${requestInfo.save.file_name}; job=${jobId}`);
             rememberSaveGenerateJob(state, {
@@ -10682,7 +10723,146 @@ async function fetchSaveGenerate(state, requestInfo, input, init) {
         return response;
     } finally {
         forgetSaveGenerateActiveChat(state, activeChatId);
+        if (!isStream || !cancelTarget?.jobId) {
+            clearActiveSaveGenerateCancelTarget(state, cancelTarget);
+        }
     }
+}
+
+function installSaveGenerateNativeStopHandler(state) {
+    if (!state || state.nativeStopHandlerInstalled) {
+        return;
+    }
+
+    state.nativeStopHandlerInstalled = true;
+    const handler = event => {
+        if (!isSaveGenerateNativeStopEvent(event)) {
+            return;
+        }
+        void cancelActiveSaveGenerateJobFromNativeStop(state);
+    };
+
+    document.addEventListener('pointerdown', handler, true);
+    document.addEventListener('click', handler, true);
+}
+
+function isSaveGenerateNativeStopEvent(event) {
+    const target = event?.target;
+    const element = target instanceof Element ? target : target?.parentElement;
+    return Boolean(element?.closest?.('#mes_stop'));
+}
+
+function setActiveSaveGenerateCancelTarget(state, target) {
+    if (!state || !target?.chatId) {
+        return null;
+    }
+
+    const activeTarget = {
+        jobId: String(target.jobId || ''),
+        chatId: String(target.chatId || ''),
+        startedAt: Date.now(),
+        cancelRequested: false,
+    };
+    state.activeSaveGenerateCancelTarget = activeTarget;
+    return activeTarget;
+}
+
+function getActiveSaveGenerateCancelTarget(state) {
+    const target = state?.activeSaveGenerateCancelTarget;
+    if (!target?.chatId && !target?.jobId) {
+        return null;
+    }
+
+    if (Date.now() - Number(target.startedAt || 0) > SAVE_GENERATE_POLL_TIMEOUT_MS * 2) {
+        state.activeSaveGenerateCancelTarget = null;
+        return null;
+    }
+
+    return target;
+}
+
+function clearActiveSaveGenerateCancelTarget(state, target = null) {
+    const activeTarget = state?.activeSaveGenerateCancelTarget;
+    if (!state || !activeTarget) {
+        return;
+    }
+
+    if (!target || target === activeTarget) {
+        state.activeSaveGenerateCancelTarget = null;
+        return;
+    }
+
+    const activeJobId = String(activeTarget.jobId || '');
+    const targetJobId = String(target.jobId || target.id || '');
+    const activeChatId = String(activeTarget.chatId || '');
+    const targetChatId = String(target.chatId || target.save?.chatId || '');
+
+    if (targetJobId && activeJobId && targetJobId !== activeJobId) {
+        return;
+    }
+    if (targetChatId && activeChatId && targetChatId !== activeChatId) {
+        return;
+    }
+    if (!targetJobId && !targetChatId) {
+        return;
+    }
+
+    state.activeSaveGenerateCancelTarget = null;
+}
+
+async function cancelActiveSaveGenerateJobFromNativeStop(state) {
+    if (!state?.originalFetch) {
+        return;
+    }
+
+    const target = getActiveSaveGenerateCancelTarget(state);
+    if (!target || target.cancelRequested) {
+        return;
+    }
+
+    target.cancelRequested = true;
+    try {
+        const job = await cancelSaveGenerateJobWithRetry(state.originalFetch, target);
+        const canceledJob = {
+            id: target.jobId || job?.id || '',
+            ...(job || {}),
+            status: job?.status || 'canceled',
+            chatId: target.chatId,
+        };
+        clearActiveSaveGenerateCancelTarget(state, canceledJob);
+        if (canceledJob.id) {
+            finishSaveGenerateCanceledDisplay(state, canceledJob);
+        } else {
+            showSaveGenerateInfoToast('柏宝库后台生成已停止');
+        }
+    } catch (error) {
+        target.cancelRequested = false;
+        console.debug(`${LOG_PREFIX} save-generate native stop cancel failed`, error);
+    }
+}
+
+async function cancelSaveGenerateJobWithRetry(fetchFn, target) {
+    const chatId = String(target?.chatId || '').trim();
+    const maxAttempts = target?.jobId || !chatId ? 1 : 6;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        const jobId = String(target?.jobId || '').trim();
+        try {
+            return await cancelSaveGenerateJob(fetchFn, jobId, { chatId });
+        } catch (error) {
+            if (jobId || attempt >= maxAttempts - 1 || !isRetryableSaveGenerateCancelError(error)) {
+                throw error;
+            }
+            await delaySaveGeneratePoll(250);
+        }
+    }
+
+    return null;
+}
+
+function isRetryableSaveGenerateCancelError(error) {
+    return Number(error?.status || 0) === 404
+        || /not found|HTTP 404|cancelable save-generate job was not found/i.test(String(error?.message || ''));
 }
 
 function rememberSaveGenerateJob(state, record) {
@@ -10744,6 +10924,10 @@ async function maybeHandleSaveGenerateSaveRequest(state, input, init) {
 
     record.consumed = true;
     const job = await waitSaveGenerateJobTerminal(state, record);
+    clearActiveSaveGenerateCancelTarget(state, {
+        id: record.id,
+        chatId: record.save?.chatId,
+    });
     cleanupSaveGenerateRecords(state);
 
     if (job && ['saved', 'already_saved'].includes(job.status)) {
@@ -10827,20 +11011,39 @@ async function fetchSaveGenerateJobStatus(fetchFn, jobId) {
     return payload.data || null;
 }
 
-async function cancelSaveGenerateJob(fetchFn, jobId) {
+async function cancelSaveGenerateJob(fetchFn, jobId, { chatId = '' } = {}) {
+    const normalizedJobId = String(jobId || '').trim();
+    const normalizedChatId = String(chatId || '').trim();
+    if (!normalizedJobId && !normalizedChatId) {
+        throw new Error('save-generate cancel requires jobId or chatId');
+    }
+
     const headers = new Headers(getRequestHeaders());
     headers.set('Content-Type', 'application/json');
-    const response = await fetchFn(`${BAIBAOKU_SAVE_GENERATE_URL}/${encodeURIComponent(jobId)}/cancel`, {
+    const url = normalizedJobId
+        ? `${BAIBAOKU_SAVE_GENERATE_URL}/${encodeURIComponent(normalizedJobId)}/cancel`
+        : `${BAIBAOKU_SAVE_GENERATE_URL}/cancel`;
+    const body = {};
+    if (normalizedJobId) {
+        body.jobId = normalizedJobId;
+    }
+    if (normalizedChatId) {
+        body.chatId = normalizedChatId;
+    }
+
+    const response = await fetchFn(url, {
         method: 'POST',
         headers,
         cache: 'no-store',
-        body: JSON.stringify({ jobId }),
+        body: JSON.stringify(body),
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok || payload?.ok !== true) {
-        throw new Error(payload?.message || payload?.error?.message || `HTTP ${response.status}`);
+        const error = new Error(payload?.message || payload?.error?.message || `HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
     }
-    return payload.data || { id: jobId, status: 'canceled' };
+    return payload.data || { id: normalizedJobId, status: 'canceled' };
 }
 
 function buildSkippedSaveGenerateSaveResponse(job) {
@@ -10898,41 +11101,78 @@ function queueSaveGenerateResumeCheck(state, reason = 'unknown', delayMs = SAVE_
         clearTimeout(state.resumeCheckTimer);
     }
 
+    state.resumeCheckScheduledChatId = getCurrentSaveGenerateChatId();
+    state.resumeCheckScheduledLastMessageHash = getCurrentSaveGenerateLastMessageHash();
+    refreshSaveGenerateRecoveryUiLock(state);
+
     state.resumeCheckTimer = setTimeout(() => {
+        const scheduledLastMessageHash = String(state.resumeCheckScheduledLastMessageHash || '');
         state.resumeCheckTimer = null;
-        void checkCurrentSaveGenerateJob(state, reason);
+        state.resumeCheckScheduledChatId = '';
+        state.resumeCheckScheduledLastMessageHash = '';
+        refreshSaveGenerateRecoveryUiLock(state);
+        void checkCurrentSaveGenerateJob(state, reason, { lastMessageHash: scheduledLastMessageHash });
     }, delayMs);
 }
 
-async function checkCurrentSaveGenerateJob(state, reason = 'unknown') {
+async function checkCurrentSaveGenerateJob(state, reason = 'unknown', { force = false, lastMessageHash = null } = {}) {
     if (!state?.isEnabled?.() || selected_group) {
-        return;
+        return null;
     }
 
     const chatId = getCurrentSaveGenerateChatId();
     if (!chatId) {
-        return;
+        return null;
+    }
+
+    if (!(state.resumeCheckPromises instanceof Map)) {
+        state.resumeCheckPromises = new Map();
+    }
+
+    const existingPromise = state.resumeCheckPromises.get(chatId);
+    if (existingPromise) {
+        return existingPromise;
+    }
+
+    const promise = runCurrentSaveGenerateJobCheck(state, chatId, reason, { force, lastMessageHash });
+    state.resumeCheckPromises.set(chatId, promise);
+    refreshSaveGenerateRecoveryUiLock(state);
+
+    try {
+        return await promise;
+    } finally {
+        if (state.resumeCheckPromises?.get(chatId) === promise) {
+            state.resumeCheckPromises.delete(chatId);
+        }
+        if (state.resumeCheckInFlightChatId === chatId) {
+            state.resumeCheckInFlightChatId = '';
+        }
+        refreshSaveGenerateRecoveryUiLock(state);
+    }
+}
+
+async function runCurrentSaveGenerateJobCheck(state, chatId, reason = 'unknown', { force = false, lastMessageHash = null } = {}) {
+    if (!state?.isEnabled?.() || selected_group || !chatId) {
+        return null;
     }
 
     if (isSaveGenerateActiveLocalChat(state, chatId)) {
         console.debug(`${LOG_PREFIX} save-generate resume check skipped: current page is generating this chat (${reason})`);
-        return;
+        return null;
     }
 
     const now = Date.now();
-    if (state.resumeCheckInFlightChatId === chatId) {
-        console.debug(`${LOG_PREFIX} save-generate resume check skipped: same chat is already checking (${reason})`);
-        return;
-    }
-    if (state.lastResumeCheckChatId === chatId && now - Number(state.lastResumeCheckAt || 0) < SAVE_GENERATE_RESUME_CHECK_COOLDOWN_MS) {
+    if (!force && state.lastResumeCheckChatId === chatId && now - Number(state.lastResumeCheckAt || 0) < SAVE_GENERATE_RESUME_CHECK_COOLDOWN_MS) {
         console.debug(`${LOG_PREFIX} save-generate resume check skipped: same chat cooldown (${reason})`);
-        return;
+        return null;
     }
 
     state.resumeCheckInFlightChatId = chatId;
     try {
-        const lastMessageHash = getCurrentSaveGenerateLastMessageHash();
-        const job = await fetchSaveGenerateJobByChatId(state.originalFetch, chatId, lastMessageHash).catch(error => {
+        const effectiveLastMessageHash = typeof lastMessageHash === 'string'
+            ? lastMessageHash
+            : getCurrentSaveGenerateLastMessageHash();
+        const job = await fetchSaveGenerateJobByChatId(state.originalFetch, chatId, effectiveLastMessageHash).catch(error => {
             console.debug(`${LOG_PREFIX} save-generate resume check failed`, error);
             return null;
         });
@@ -10941,16 +11181,26 @@ async function checkCurrentSaveGenerateJob(state, reason = 'unknown') {
         state.lastResumeCheckAt = Date.now();
 
         if (!job?.id) {
-            return;
+            return null;
+        }
+
+        if (isSaveGenerateJobSeen(job)) {
+            markSaveGenerateLocalJobConsumed(state, job.id);
+            return job;
         }
 
         if (isSaveGenerateKnownLocalJob(state, job.id)) {
+            if (isSaveGenerateTerminalStatus(job.status)) {
+                markSaveGenerateLocalJobConsumed(state, job.id);
+                markSaveGenerateJobSeen(job);
+            }
             console.debug(`${LOG_PREFIX} save-generate resume check skipped: job is owned by current page job=${job.id} (${reason})`);
-            return;
+            return job;
         }
 
         console.debug(`${LOG_PREFIX} save-generate resume check found job=${job.id} status=${job.status} reason=${reason}`);
         handleSaveGenerateJobForCurrentChat(state, job, chatId, reason);
+        return job;
     } finally {
         if (state.resumeCheckInFlightChatId === chatId) {
             state.resumeCheckInFlightChatId = '';
@@ -10962,12 +11212,261 @@ function isSaveGenerateActiveLocalChat(state, chatId) {
     return Boolean(chatId && state?.activeGenerateChatIds instanceof Set && state.activeGenerateChatIds.has(chatId));
 }
 
+function installSaveGenerateRecoveryInputBlocker(state) {
+    if (!state || state.recoveryInputBlockerInstalled) {
+        return;
+    }
+
+    state.recoveryInputBlockerInstalled = true;
+    const handler = event => {
+        if (!state?.isEnabled?.()) {
+            return;
+        }
+
+        const target = event?.target;
+        const element = target instanceof Element ? target : target?.parentElement;
+        if (!element?.closest?.(SAVE_GENERATE_RECOVERY_BLOCK_SELECTOR)) {
+            return;
+        }
+
+        const chatId = getCurrentSaveGenerateChatId();
+        if (!chatId || !shouldBlockSaveGenerateUserInput(state, chatId)) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        showSaveGenerateRecoveryBlockToast(state);
+        void waitForSaveGenerateRecoveryGate(state, chatId, 'blocked-input');
+    };
+
+    document.addEventListener('pointerdown', handler, true);
+    document.addEventListener('click', handler, true);
+}
+
+function shouldBlockSaveGenerateUserInput(state, chatId) {
+    return Boolean(getSaveGenerateRecoveryLock(state, chatId) || isSaveGenerateResumeCheckPendingForChat(state, chatId));
+}
+
+async function maybeBlockSaveGenerateRequestForRecovery(state, requestInfo) {
+    const chatId = String(requestInfo?.save?.chatId || '').trim();
+    if (!chatId) {
+        return null;
+    }
+
+    const lock = await waitForSaveGenerateRecoveryGate(state, chatId, 'generate-fetch');
+    if (!lock) {
+        return null;
+    }
+
+    console.debug(`${LOG_PREFIX} save-generate blocked native generate while recovering job=${lock.jobId || ''}`);
+    showSaveGenerateRecoveryBlockToast(state);
+    return buildSaveGenerateRecoveryBlockedResponse(lock);
+}
+
+async function waitForSaveGenerateRecoveryGate(state, chatId, reason = 'unknown') {
+    const normalizedChatId = String(chatId || '').trim();
+    if (!state || !normalizedChatId) {
+        return null;
+    }
+
+    const existingLock = getSaveGenerateRecoveryLock(state, normalizedChatId);
+    if (existingLock) {
+        return existingLock;
+    }
+
+    const pendingCheck = getSaveGenerateResumeCheckPromise(state, normalizedChatId);
+    if (pendingCheck) {
+        await pendingCheck.catch(error => {
+            console.debug(`${LOG_PREFIX} save-generate pending resume check failed`, error);
+        });
+        return getSaveGenerateRecoveryLock(state, normalizedChatId);
+    }
+
+    if (state.resumeCheckTimer && state.resumeCheckScheduledChatId === normalizedChatId) {
+        const scheduledLastMessageHash = String(state.resumeCheckScheduledLastMessageHash || '');
+        clearTimeout(state.resumeCheckTimer);
+        state.resumeCheckTimer = null;
+        state.resumeCheckScheduledChatId = '';
+        state.resumeCheckScheduledLastMessageHash = '';
+        refreshSaveGenerateRecoveryUiLock(state);
+        await checkCurrentSaveGenerateJob(state, reason, { force: true, lastMessageHash: scheduledLastMessageHash }).catch(error => {
+            console.debug(`${LOG_PREFIX} save-generate forced resume check failed`, error);
+        });
+    }
+
+    return getSaveGenerateRecoveryLock(state, normalizedChatId);
+}
+
+function getSaveGenerateResumeCheckPromise(state, chatId) {
+    if (!chatId || !(state?.resumeCheckPromises instanceof Map)) {
+        return null;
+    }
+    return state.resumeCheckPromises.get(chatId) || null;
+}
+
+function isSaveGenerateResumeCheckPendingForChat(state, chatId) {
+    const normalizedChatId = String(chatId || '').trim();
+    if (!normalizedChatId) {
+        return false;
+    }
+    if (state?.resumeCheckScheduledChatId === normalizedChatId && state.resumeCheckTimer) {
+        return true;
+    }
+    return Boolean(getSaveGenerateResumeCheckPromise(state, normalizedChatId));
+}
+
+function setSaveGenerateRecoveryLock(state, job, chatId) {
+    const normalizedChatId = String(chatId || job?.chatId || job?.save?.chatId || '').trim();
+    const jobId = String(job?.id || '').trim();
+    if (!state || !normalizedChatId || !jobId) {
+        return null;
+    }
+
+    if (!(state.recoveryLocks instanceof Map)) {
+        state.recoveryLocks = new Map();
+    }
+
+    const lock = {
+        chatId: normalizedChatId,
+        jobId,
+        status: String(job?.status || ''),
+        createdAt: Date.now(),
+    };
+    state.recoveryLocks.set(normalizedChatId, lock);
+    refreshSaveGenerateRecoveryUiLock(state);
+    return lock;
+}
+
+function getSaveGenerateRecoveryLock(state, chatId) {
+    const normalizedChatId = String(chatId || '').trim();
+    if (!normalizedChatId || !(state?.recoveryLocks instanceof Map)) {
+        return null;
+    }
+
+    const lock = state.recoveryLocks.get(normalizedChatId) || null;
+    if (!lock) {
+        return null;
+    }
+
+    if (Date.now() - Number(lock.createdAt || 0) > SAVE_GENERATE_POLL_TIMEOUT_MS * 2) {
+        state.recoveryLocks.delete(normalizedChatId);
+        refreshSaveGenerateRecoveryUiLock(state);
+        return null;
+    }
+
+    return lock;
+}
+
+function clearSaveGenerateRecoveryLock(state, jobOrChatId) {
+    if (!state || !(state.recoveryLocks instanceof Map)) {
+        return;
+    }
+
+    const chatId = typeof jobOrChatId === 'string'
+        ? jobOrChatId
+        : String(jobOrChatId?.chatId || jobOrChatId?.save?.chatId || '').trim();
+    const jobId = typeof jobOrChatId === 'string'
+        ? ''
+        : String(jobOrChatId?.jobId || jobOrChatId?.id || '').trim();
+
+    if (!chatId && !jobId) {
+        return;
+    }
+
+    for (const [lockedChatId, lock] of state.recoveryLocks.entries()) {
+        if (chatId && lockedChatId !== chatId) {
+            continue;
+        }
+        if (jobId && lock.jobId && lock.jobId !== jobId) {
+            continue;
+        }
+        state.recoveryLocks.delete(lockedChatId);
+    }
+
+    refreshSaveGenerateRecoveryUiLock(state);
+}
+
+function refreshSaveGenerateRecoveryUiLock(state) {
+    const chatId = getCurrentSaveGenerateChatId();
+    const shouldBlock = Boolean(chatId && shouldBlockSaveGenerateUserInput(state, chatId));
+    const elements = document.querySelectorAll(SAVE_GENERATE_RECOVERY_BLOCK_SELECTOR);
+    for (const element of elements) {
+        if (!(element instanceof HTMLElement)) {
+            continue;
+        }
+
+        if (shouldBlock) {
+            if (!element.dataset.baibaokuSaveGenerateRecoveryTitle) {
+                element.dataset.baibaokuSaveGenerateRecoveryTitle = element.getAttribute('title') || '';
+            }
+            element.setAttribute('title', '柏宝库后台生成恢复中，请稍后再发送');
+            element.setAttribute('aria-disabled', 'true');
+            element.classList.add('bai-bai-save-generate-recovery-disabled');
+            continue;
+        }
+
+        if (element.classList.contains('bai-bai-save-generate-recovery-disabled')) {
+            const title = element.dataset.baibaokuSaveGenerateRecoveryTitle || '';
+            if (title) {
+                element.setAttribute('title', title);
+            } else {
+                element.removeAttribute('title');
+            }
+            delete element.dataset.baibaokuSaveGenerateRecoveryTitle;
+            element.removeAttribute('aria-disabled');
+            element.classList.remove('bai-bai-save-generate-recovery-disabled');
+        }
+    }
+}
+
+function buildSaveGenerateRecoveryBlockedResponse(lock) {
+    return new Response(JSON.stringify({
+        error: {
+            message: '柏宝库后台生成恢复中，请稍后再发送。',
+        },
+        baibaokuSaveGenerateRecoveryBlocked: true,
+        jobId: lock?.jobId || '',
+    }), {
+        status: 409,
+        statusText: 'Conflict',
+        headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            'X-Baibaoku-Save-Generate-Recovery-Blocked': 'true',
+        },
+    });
+}
+
+function showSaveGenerateRecoveryBlockToast(state) {
+    const now = Date.now();
+    if (now - Number(state?.lastRecoveryBlockToastAt || 0) < SAVE_GENERATE_RECOVERY_BLOCK_TOAST_INTERVAL_MS) {
+        return;
+    }
+    if (state) {
+        state.lastRecoveryBlockToastAt = now;
+    }
+    showSaveGenerateInfoToast('柏宝库后台生成恢复中，请稍后再发送');
+}
+
 function isSaveGenerateKnownLocalJob(state, jobId) {
     if (!jobId || !Array.isArray(state?.pendingJobs)) {
         return false;
     }
     cleanupSaveGenerateRecords(state);
     return state.pendingJobs.some(record => String(record?.id || '') === String(jobId));
+}
+
+function markSaveGenerateLocalJobConsumed(state, jobId) {
+    if (!jobId || !Array.isArray(state?.pendingJobs)) {
+        return;
+    }
+
+    for (const record of state.pendingJobs) {
+        if (String(record?.id || '') === String(jobId)) {
+            record.consumed = true;
+        }
+    }
+    cleanupSaveGenerateRecords(state);
 }
 
 async function fetchSaveGenerateJobByChatId(fetchFn, chatId, lastMessageHash = '') {
@@ -11088,15 +11587,22 @@ function markSaveGenerateDisplayElement(jobId) {
 }
 
 function handleSaveGenerateJobForCurrentChat(state, job, chatId, reason = 'unknown') {
+    setSaveGenerateRecoveryLock(state, job, chatId);
+
     if (isSaveGenerateSavedStatus(job.status)) {
         updateSaveGenerateResumeDisplay(state, job);
-        maybeRecoverCurrentChatForSaveGenerateJob(job, chatId, reason);
+        void maybeRecoverCurrentChatForSaveGenerateJob(job, chatId, reason)
+            .catch(error => {
+                console.debug(`${LOG_PREFIX} save-generate recovery failed`, error);
+            })
+            .finally(() => clearSaveGenerateRecoveryLock(state, job));
         return;
     }
 
     if (isSaveGenerateTerminalStatus(job.status)) {
         updateSaveGenerateResumeDisplay(state, job);
         markSaveGenerateJobSeen(job);
+        clearSaveGenerateRecoveryLock(state, job);
         return;
     }
 
@@ -11138,6 +11644,11 @@ function updateSaveGenerateResumeDisplay(state, job) {
         return;
     }
 
+    if (String(job.status || '') === 'canceled') {
+        finishSaveGenerateCanceledDisplay(state, job);
+        return;
+    }
+
     if (isSaveGenerateTerminalStatus(job.status)) {
         display.markStopped({ label: getSaveGenerateDisplayLabel(job) });
         scheduleSaveGenerateDisplayCleanup(state, job.id);
@@ -11159,12 +11670,40 @@ async function stopSaveGenerateResumeJob(state, jobId) {
             ...(canceledJob || {}),
             status: canceledJob?.status || 'canceled',
         };
-        markSaveGenerateJobSeen(job);
-        display?.markStopped({ label: getSaveGenerateDisplayLabel(job) });
-        scheduleSaveGenerateDisplayCleanup(state, jobId);
+        finishSaveGenerateCanceledDisplay(state, job);
     } catch (error) {
         console.debug(`${LOG_PREFIX} save-generate cancel failed`, error);
         display?.setLabel('柏宝库停止失败，后台生成仍在继续...');
+    }
+}
+
+function finishSaveGenerateCanceledDisplay(state, job) {
+    if (!job?.id) {
+        return;
+    }
+
+    clearActiveSaveGenerateCancelTarget(state, job);
+    clearSaveGenerateRecoveryLock(state, job);
+
+    if (isSaveGenerateJobSeen(job)) {
+        markSaveGenerateLocalJobConsumed(state, job.id);
+        const existingDisplay = state?.resumeDisplays?.get(job.id);
+        existingDisplay?.hide();
+        state?.resumeDisplays?.delete(job.id);
+        return;
+    }
+
+    markSaveGenerateJobSeen(job);
+    markSaveGenerateLocalJobConsumed(state, job.id);
+    const display = state?.resumeDisplays?.get(job.id);
+    display?.hide();
+    state?.resumeDisplays?.delete(job.id);
+    showSaveGenerateInfoToast('柏宝库后台生成已停止');
+}
+
+function showSaveGenerateInfoToast(message) {
+    if (typeof globalThis.toastr?.info === 'function') {
+        globalThis.toastr.info(message, '柏宝库');
     }
 }
 
@@ -11221,17 +11760,23 @@ function monitorSaveGenerateJob(state, job, chatId, reason = 'unknown') {
         onUpdate: updatedJob => updateSaveGenerateResumeDisplay(state, updatedJob),
     })
         .then(terminalJob => {
+            if (String(terminalJob?.status || '') === 'timeout') {
+                console.debug(`${LOG_PREFIX} save-generate monitor timed out job=${job.id} reason=${reason}`);
+                clearSaveGenerateRecoveryLock(state, job);
+                return;
+            }
             handleSaveGenerateJobForCurrentChat(state, terminalJob, chatId, `monitor:${reason}`);
         })
         .catch(error => {
             console.debug(`${LOG_PREFIX} save-generate monitor failed`, error);
+            clearSaveGenerateRecoveryLock(state, job);
         })
         .finally(() => {
             state.monitoredJobIds.delete(job.id);
         });
 }
 
-function maybeRecoverCurrentChatForSaveGenerateJob(job, chatId, reason = 'unknown') {
+async function maybeRecoverCurrentChatForSaveGenerateJob(job, chatId, reason = 'unknown') {
     if (!job?.id || isSaveGenerateJobSeen(job)) {
         return;
     }
@@ -11241,13 +11786,13 @@ function maybeRecoverCurrentChatForSaveGenerateJob(job, chatId, reason = 'unknow
     }
 
     if (isSaveGenerateSendAsRecoverableType(job.save?.type)) {
-        void insertSaveGenerateJobWithSendAs(job, chatId, reason);
+        await insertSaveGenerateJobWithSendAs(job, chatId, reason);
         return;
     }
 
     markSaveGenerateJobSeen(job);
     console.debug(`${LOG_PREFIX} save-generate saved non-normal job while page was away; reloading chat job=${job.id} reason=${reason}`);
-    void reloadCurrentChat().catch(error => {
+    await reloadCurrentChat().catch(error => {
         console.debug(`${LOG_PREFIX} save-generate chat reload failed`, error);
     });
 }
