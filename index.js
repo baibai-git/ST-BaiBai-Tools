@@ -27,7 +27,7 @@ import * as presetOptimizations from './presetOptimizations.js';
 
 const LOG_PREFIX = '[柏宝箱]';
 const MODULE_NAME = getModuleName();
-const CURRENT_VERSION = '0.24.5';
+const CURRENT_VERSION = '0.24.7';
 const EXTENSION_ID = getExtensionId();
 const SETTINGS_KEY = 'baiBaiToolkit';
 const EXTENSION_KEY = '__baiBaiToolkitExtensionInstalled';
@@ -255,7 +255,7 @@ const defaultSettings = {
     fastCharacterListEnabled: true,
     recentChatListAccelerationEnabled: true,
     progressiveChatLoadingEnabled: false,
-    saveGenerateEnabled: true,
+    saveGenerateEnabled: false,
     tokenizerBulkCountEnabled: true,
     extensionManifestBundleEnabled: true,
     characterListAvatarLazyLoadEnabled: true,
@@ -2338,7 +2338,7 @@ function applyBaibaokuPanelLocalState(container) {
     container.find('#bai_bai_toolkit_progressive_chat_loading_enabled')
         .prop('checked', settings.progressiveChatLoadingEnabled === true);
     container.find('#bai_bai_toolkit_save_generate_enabled')
-        .prop('checked', settings.saveGenerateEnabled !== false);
+        .prop('checked', settings.saveGenerateEnabled === true);
     container.find('#bai_bai_toolkit_tokenizer_bulk_count_enabled')
         .prop('checked', settings.tokenizerBulkCountEnabled !== false);
 
@@ -10447,7 +10447,7 @@ async function fetchFastCharacterList(fetchFn, input, init) {
 function installSaveGenerateFetchHook() {
     const existing = globalThis[SAVE_GENERATE_FETCH_KEY];
     if (existing?.wrappedFetch) {
-        existing.isEnabled = () => settings.saveGenerateEnabled !== false;
+        existing.isEnabled = () => settings.saveGenerateEnabled === true;
         if (!(existing.monitoredJobIds instanceof Set)) {
             existing.monitoredJobIds = new Set();
         }
@@ -10482,7 +10482,7 @@ function installSaveGenerateFetchHook() {
         lastResumeCheckChatId: '',
         lastResumeCheckAt: 0,
         resumeHandlersInstalled: false,
-        isEnabled: () => settings.saveGenerateEnabled !== false,
+        isEnabled: () => settings.saveGenerateEnabled === true,
     };
 
     state.wrappedFetch = async function baiBaiToolkitSaveGenerateFetch(input, init) {
@@ -10547,7 +10547,7 @@ async function getSaveGenerateRequestInfo(input, init) {
         return skip('main_api is not chat-completions', String(scriptModule.main_api || 'unknown'));
     }
 
-    if (settings.saveGenerateEnabled === false) {
+    if (settings.saveGenerateEnabled !== true) {
         return skip('setting disabled');
     }
 
@@ -10910,7 +10910,8 @@ async function checkCurrentSaveGenerateJob(state, reason = 'unknown') {
 
     state.resumeCheckInFlightChatId = chatId;
     try {
-        const job = await fetchSaveGenerateJobByChatId(state.originalFetch, chatId).catch(error => {
+        const lastMessageHash = getCurrentSaveGenerateLastMessageHash();
+        const job = await fetchSaveGenerateJobByChatId(state.originalFetch, chatId, lastMessageHash).catch(error => {
             console.debug(`${LOG_PREFIX} save-generate resume check failed`, error);
             return null;
         });
@@ -10948,9 +10949,13 @@ function isSaveGenerateKnownLocalJob(state, jobId) {
     return state.pendingJobs.some(record => String(record?.id || '') === String(jobId));
 }
 
-async function fetchSaveGenerateJobByChatId(fetchFn, chatId) {
+async function fetchSaveGenerateJobByChatId(fetchFn, chatId, lastMessageHash = '') {
     const headers = new Headers(getRequestHeaders());
-    const response = await fetchFn(`${BAIBAOKU_SAVE_GENERATE_URL}/pending?chatId=${encodeURIComponent(chatId)}`, {
+    const query = new URLSearchParams({ chatId });
+    if (lastMessageHash) {
+        query.set('lastMessageHash', lastMessageHash);
+    }
+    const response = await fetchFn(`${BAIBAOKU_SAVE_GENERATE_URL}/pending?${query.toString()}`, {
         method: 'GET',
         headers,
         cache: 'no-store',
@@ -10960,6 +10965,33 @@ async function fetchSaveGenerateJobByChatId(fetchFn, chatId) {
         throw new Error(payload?.message || payload?.error?.message || `HTTP ${response.status}`);
     }
     return payload.data || null;
+}
+
+function getCurrentSaveGenerateLastMessageHash() {
+    const messages = scriptModule.chat;
+    if (!Array.isArray(messages) || messages.length === 0) {
+        return '';
+    }
+
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index];
+        if (!message || message.chat_metadata) {
+            continue;
+        }
+        return makeSaveGenerateMessageContentHash(message.mes ?? '');
+    }
+
+    return '';
+}
+
+function makeSaveGenerateMessageContentHash(value) {
+    const text = String(value ?? '');
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < text.length; index += 1) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 0x01000193);
+    }
+    return `${text.length.toString(36)}:${(hash >>> 0).toString(16).padStart(8, '0')}`;
 }
 
 function handleSaveGenerateJobForCurrentChat(state, job, chatId, reason = 'unknown') {
