@@ -3,7 +3,7 @@
     "loading_order": -1000,
     "requires": [],
     "optional": [],
-    "js": "index.js",
+    "js": "bootstrap.js",
     "author": "柏柏",
     "version": "0.25.3",
     "homePage": "",
