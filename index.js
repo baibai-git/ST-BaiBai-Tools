@@ -22,13 +22,14 @@ import { sendMessageAs } from '../../../slash-commands.js';
 import { isAdmin } from '../../../user.js';
 import { debounce, download, getFileText, regexFromString, resetScrollHeight, setInfoBlock, uuidv4 } from '../../../utils.js';
 import { getCurrentPresetAPI as getRegexCurrentPresetAPI, getCurrentPresetName as getRegexCurrentPresetName, getScriptsByType as getRegexScriptsByType, runRegexScript, SCRIPT_TYPES as REGEX_SCRIPT_TYPES, substitute_find_regex } from '../../regex/engine.js';
-import { SaveGenerateDisplay } from './saveGenerateDisplay.js';
-import * as chatOptimizations from './chatOptimizations.js';
-import * as presetOptimizations from './presetOptimizations.js';
+const CURRENT_VERSION = '0.25.3';
+const LOCAL_ASSET_VERSION = getLocalAssetVersion(CURRENT_VERSION);
+const { SaveGenerateDisplay } = await importVersionedLocalModule('./saveGenerateDisplay.js');
+const chatOptimizations = await importVersionedLocalModule('./chatOptimizations.js');
+const presetOptimizations = await importVersionedLocalModule('./presetOptimizations.js');
 
 const LOG_PREFIX = '[柏宝箱]';
 const MODULE_NAME = getModuleName();
-const CURRENT_VERSION = '0.25.3';
 const EXTENSION_ID = getExtensionId();
 const SETTINGS_KEY = 'baiBaiToolkit';
 const EXTENSION_KEY = '__baiBaiToolkitExtensionInstalled';
@@ -412,6 +413,39 @@ function getExtensionState() {
     }
 
     return globalThis[EXTENSION_KEY];
+}
+
+function getLocalAssetVersion(fallback = 'dev') {
+    try {
+        return new URL(import.meta.url).searchParams.get('v') || fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+function versionedLocalUrl(path) {
+    const url = new URL(path, import.meta.url);
+    url.searchParams.set('v', LOCAL_ASSET_VERSION);
+    return url.href;
+}
+
+async function importVersionedLocalModule(path) {
+    return import(versionedLocalUrl(path));
+}
+
+async function loadVersionedSettingsTemplate() {
+    try {
+        const response = await fetch(versionedLocalUrl('./settings.html'));
+
+        if (!response.ok) {
+            throw new Error(`Failed to load settings.html: ${response.status} ${response.statusText}`);
+        }
+
+        return response.text();
+    } catch (error) {
+        console.debug(`${LOG_PREFIX} Versioned settings template load failed; falling back to SillyTavern template loader.`, error);
+        return renderExtensionTemplateAsync(MODULE_NAME, 'settings');
+    }
 }
 
 function getModuleName() {
@@ -2515,7 +2549,7 @@ async function renderSettingsPanel() {
         root.append(container);
     }
 
-    const template = await renderExtensionTemplateAsync(MODULE_NAME, 'settings');
+    const template = await loadVersionedSettingsTemplate();
     container.empty().append(template);
 
     // 初始化版本信息和更新逻辑
