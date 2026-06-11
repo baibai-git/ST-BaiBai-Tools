@@ -40,6 +40,11 @@ const BAIBAOKU_STATUS_URL = '/api/plugins/baibaoku/v1/status';
 const BAIBAOKU_FAST_CONFIG_URL = '/api/plugins/baibaoku/v1/fast-config';
 const BAIBAOKU_FAST_CHAT_GET_URL = '/api/plugins/baibaoku/v1/chats/fast-get';
 const BAIBAOKU_THEME_GET_URL = '/api/plugins/baibaoku/v1/themes/get';
+const BAIBAOKU_THEME_LOADING_STYLE_ID = 'bai_bai_toolkit_theme_loading_style';
+const BAIBAOKU_THEME_LOADING_HOST_CLASS = 'bai-bai-toolkit-theme-loading-host';
+const BAIBAOKU_THEME_LOADING_OVERLAY_CLASS = 'bai-bai-toolkit-theme-loading-overlay';
+const BAIBAOKU_THEME_LOADING_FIXED_CLASS = 'bai-bai-toolkit-theme-loading-overlay-fixed';
+const BAIBAOKU_THEME_LOADING_SPINNER_CLASS = 'bai-bai-toolkit-theme-loading-spinner';
 const BAIBAOKU_SAVE_GENERATE_URL = '/api/plugins/baibaoku/v1/chats/save-generate';
 const BAIBAOKU_STATUS_TIMEOUT_MS = 3000;
 const BAIBAOKU_PANEL_STATUS_CACHE_MS = 5 * 60_000;
@@ -469,6 +474,9 @@ function getLazyThemeChangeGuardState() {
             pending: null,
             replaying: false,
             currentThemeName: '',
+            loadingToken: null,
+            loadingHost: null,
+            loadingOverlay: null,
         };
     }
 
@@ -588,6 +596,141 @@ function setBaibaokuSelectValue(selectId, value, text = value) {
     refreshBaibaokuSelectDisplay(selectId);
 }
 
+function applyBaibaokuThemeLoadingStyle() {
+    let style = document.getElementById(BAIBAOKU_THEME_LOADING_STYLE_ID);
+    if (!style) {
+        style = document.createElement('style');
+        style.id = BAIBAOKU_THEME_LOADING_STYLE_ID;
+        document.head.append(style);
+    }
+
+    style.textContent = `
+.${BAIBAOKU_THEME_LOADING_HOST_CLASS} {
+    position: relative;
+}
+
+.${BAIBAOKU_THEME_LOADING_OVERLAY_CLASS} {
+    align-items: center;
+    background: rgba(20, 22, 26, 0.62);
+    border-radius: 6px;
+    box-sizing: border-box;
+    color: #ffffff;
+    display: flex;
+    font-size: 13px;
+    font-weight: 600;
+    gap: 8px;
+    inset: 0;
+    justify-content: center;
+    line-height: 1.4;
+    min-height: 42px;
+    padding: 10px 12px;
+    pointer-events: auto;
+    position: absolute;
+    text-align: center;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+    z-index: 30;
+}
+
+.${BAIBAOKU_THEME_LOADING_FIXED_CLASS} {
+    border-radius: 0;
+    min-height: 0;
+    position: fixed;
+    z-index: 10000;
+}
+
+.${BAIBAOKU_THEME_LOADING_SPINNER_CLASS} {
+    animation: bai-bai-toolkit-theme-loading-spin 0.75s linear infinite;
+    border: 2px solid rgba(255, 255, 255, 0.42);
+    border-radius: 50%;
+    border-top-color: #ffffff;
+    flex: 0 0 auto;
+    height: 16px;
+    width: 16px;
+}
+
+@keyframes bai-bai-toolkit-theme-loading-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .${BAIBAOKU_THEME_LOADING_SPINNER_CLASS} {
+        animation: none;
+    }
+}
+`;
+}
+
+function getBaibaokuThemeLoadingHost(target) {
+    if (target instanceof Element) {
+        const localHost = target.closest('#UI-presets-block, #UI-Theme-Block');
+        if (localHost instanceof HTMLElement) {
+            return localHost;
+        }
+    }
+
+    return document.body;
+}
+
+function showBaibaokuThemeLoadingOverlay(state, target) {
+    const token = {};
+    const host = getBaibaokuThemeLoadingHost(target);
+    if (!(host instanceof HTMLElement)) {
+        state.loadingToken = token;
+        return token;
+    }
+
+    applyBaibaokuThemeLoadingStyle();
+    hideBaibaokuThemeLoadingOverlay(state);
+
+    const fixed = host === document.body;
+    const overlay = document.createElement('div');
+    overlay.className = fixed
+        ? `${BAIBAOKU_THEME_LOADING_OVERLAY_CLASS} ${BAIBAOKU_THEME_LOADING_FIXED_CLASS}`
+        : BAIBAOKU_THEME_LOADING_OVERLAY_CLASS;
+    overlay.setAttribute('role', 'status');
+    overlay.setAttribute('aria-live', 'polite');
+    overlay.innerHTML = `<span class="${BAIBAOKU_THEME_LOADING_SPINNER_CLASS}" aria-hidden="true"></span><span>正在加载美化主题...</span>`;
+
+    if (!fixed) {
+        host.classList.add(BAIBAOKU_THEME_LOADING_HOST_CLASS);
+    }
+    host.append(overlay);
+
+    state.loadingToken = token;
+    state.loadingHost = host;
+    state.loadingOverlay = overlay;
+    return token;
+}
+
+function hideBaibaokuThemeLoadingOverlay(state, token = null) {
+    if (token && state.loadingToken !== token) {
+        return;
+    }
+
+    state.loadingOverlay?.remove();
+    if (state.loadingHost instanceof HTMLElement && state.loadingHost !== document.body) {
+        state.loadingHost.classList.remove(BAIBAOKU_THEME_LOADING_HOST_CLASS);
+    }
+
+    state.loadingToken = null;
+    state.loadingHost = null;
+    state.loadingOverlay = null;
+}
+
+function setBaibaokuThemeSelectBusy(target, busy) {
+    if (target instanceof HTMLSelectElement) {
+        target.disabled = busy;
+    }
+
+    const $themes = $('#themes');
+    $themes.prop('disabled', busy);
+    if (typeof $themes.select2 === 'function' && ($themes.data('select2') || $themes.hasClass('select2-hidden-accessible'))) {
+        $themes.trigger('change.select2');
+    }
+}
+
 function syncCustomCssCodeMirrorFromThemeChange() {
     const state = extensionState[CUSTOM_CSS_CODEMIRROR_EDITOR_KEY];
     if (!state?.enabled || !state.view) {
@@ -690,7 +833,8 @@ function applyBaibaokuLazyThemeLoadingOptimization() {
         event.stopImmediatePropagation();
 
         const previousThemeName = state.currentThemeName || String(power_user?.theme || '');
-        target.disabled = true;
+        const loadingToken = showBaibaokuThemeLoadingOverlay(state, target);
+        setBaibaokuThemeSelectBusy(target, true);
 
         state.pending = fetchBaibaokuThemeByName(themeName)
             .then((theme) => {
@@ -707,11 +851,17 @@ function applyBaibaokuLazyThemeLoadingOptimization() {
                 if (previousThemeName) {
                     setBaibaokuSelectValue('themes', previousThemeName);
                 }
+                if (globalThis.toastr?.error) {
+                    globalThis.toastr.error(`美化主题加载失败：${error?.message || String(error)}`, '柏宝库');
+                }
                 console.warn(`${LOG_PREFIX} Failed to lazy-load theme`, error);
             })
             .finally(() => {
-                target.disabled = false;
-                state.pending = null;
+                if (state.loadingToken === loadingToken) {
+                    setBaibaokuThemeSelectBusy(target, false);
+                    state.pending = null;
+                }
+                hideBaibaokuThemeLoadingOverlay(state, loadingToken);
             });
     };
 
