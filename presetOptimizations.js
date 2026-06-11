@@ -6,7 +6,7 @@ import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
 import { INJECTION_POSITION } from '../../../PromptManager.js';
 import { isMobile } from '../../../RossAscends-mods.js';
 import { renderTemplateAsync } from '../../../templates.js';
-import { debounce, escapeHtml } from '../../../utils.js';
+import { debounce, escapeHtml, getStringHash } from '../../../utils.js';
 
 const PRESET_PROMPT_CODEMIRROR_EDITOR_KEY = '__baiBaiToolkitPresetPromptCodeMirrorEditor';
 const PRESET_PROMPT_CODEMIRROR_EDITOR_STYLE_ID = 'bai_bai_toolkit_preset_prompt_codemirror_editor_style';
@@ -43,6 +43,8 @@ const PRESET_PROMPT_CODEMIRROR_READONLY_CLASS = 'bai-bai-toolkit-preset-prompt-r
 const PRESET_PROMPT_CODEMIRROR_MAXIMIZED_CLASS = 'bai-bai-toolkit-preset-prompt-maximized';
 const PRESET_DRAG_INTERACTIVE_SELECTOR = '.prompt_manager_prompt_controls, .prompt-manager-detach-action, .prompt-manager-inspect-action, .prompt-manager-edit-action, .prompt-manager-toggle-action, a, button, input, select, textarea, [contenteditable="true"]';
 const BAIBAOKU_TOKENIZER_BULK_COUNT_URL = '/api/plugins/baibaoku/v1/tokenizers/bulk-count';
+const OPENAI_TOKENIZER_BULK_BRIDGE_KEY = '__baibaokuTokenizerBulkBridge';
+const OPENAI_TOKENIZER_BULK_CACHE_LIMIT = 5000;
 const PRESET_CHAT_LOAD_RENDER_SUPPRESS_MS = 2000;
 const PRESET_DRAG_READY_CLASS = 'bai-bai-toolkit-preset-drag-ready';
 const PRESET_DRAG_ACTIVE_CLASS = 'bai-bai-toolkit-preset-drag-active';
@@ -81,6 +83,23 @@ export function configurePresetOptimizations(context = {}) {
     LOG_PREFIX = context.logPrefix ?? LOG_PREFIX;
     loadCodeMirrorModules = context.loadCodeMirrorModules ?? loadCodeMirrorModules;
     codeMirrorHistoryMaxLength = context.codeMirrorHistoryMaxLength ?? codeMirrorHistoryMaxLength;
+}
+
+export function installOpenAITokenizerBulkBridge() {
+    const state = getOpenAITokenizerBulkState();
+    const bridge = globalThis[OPENAI_TOKENIZER_BULK_BRIDGE_KEY] && typeof globalThis[OPENAI_TOKENIZER_BULK_BRIDGE_KEY] === 'object'
+        ? globalThis[OPENAI_TOKENIZER_BULK_BRIDGE_KEY]
+        : {};
+
+    bridge.installed = true;
+    bridge.version = '0.1';
+    bridge.prepareOpenAIMessages = prepareOpenAITokenizerBulkMessages;
+    bridge.clear = () => state.cache.clear();
+    bridge.getStats = () => ({ ...state.stats, cacheSize: state.cache.size });
+    bridge.isEnabled = isOpenAITokenizerBulkEnabled;
+    globalThis[OPENAI_TOKENIZER_BULK_BRIDGE_KEY] = bridge;
+
+    installOpenAITokenizerBulkAjaxPatch();
 }
 
 export function bindPresetOptimizationSettings({ saveSettings } = {}) {
@@ -2164,6 +2183,430 @@ function normalizeBulkSingleMessageCount(rawCount, model) {
 
     const adjustment = model === 'claude' ? 1 : 3;
     return Math.max(0, count - adjustment);
+}
+
+function getOpenAITokenizerBulkState() {
+    if (!extensionState.openAITokenizerBulkBridge || typeof extensionState.openAITokenizerBulkBridge !== 'object') {
+        extensionState.openAITokenizerBulkBridge = {};
+    }
+
+    const state = extensionState.openAITokenizerBulkBridge;
+    if (!(state.cache instanceof Map)) {
+        state.cache = new Map();
+    }
+    if (!state.stats || typeof state.stats !== 'object') {
+        state.stats = {
+            prepareCalls: 0,
+            prepareMessages: 0,
+            prepareEmpty: 0,
+            prepareErrors: 0,
+            ajaxHits: 0,
+            ajaxMisses: 0,
+            ajaxFallbacks: 0,
+            ajaxErrors: 0,
+        };
+    }
+
+    return state;
+}
+
+function installOpenAITokenizerBulkAjaxPatch() {
+    const state = getOpenAITokenizerBulkState();
+    if (state.ajaxPatched) {
+        return;
+    }
+
+    const jq = globalThis.jQuery;
+    if (!jq || typeof jq.ajax !== 'function') {
+        console.debug(`${LOG_PREFIX} jQuery.ajax unavailable; OpenAI tokenizer bulk bridge was not installed`);
+        return;
+    }
+
+    const originalAjax = jq.ajax;
+    state.originalAjax = originalAjax;
+    jq.ajax = function baiBaiOpenAITokenizerBulkAjax(...args) {
+        const request = normalizeJQueryAjaxRequest(args);
+        if (!request || !shouldInterceptOpenAITokenizerCount(request.options)) {
+            return originalAjax.apply(this, args);
+        }
+
+        const intercepted = handleOpenAITokenizerBulkAjax(this, args, request.options);
+        return intercepted || originalAjax.apply(this, args);
+    };
+
+    state.ajaxPatched = true;
+}
+
+function normalizeJQueryAjaxRequest(args) {
+    const first = args[0];
+    if (typeof first === 'string') {
+        return {
+            options: {
+                ...(args[1] && typeof args[1] === 'object' ? args[1] : {}),
+                url: first,
+            },
+        };
+    }
+
+    if (first && typeof first === 'object') {
+        return { options: first };
+    }
+
+    return null;
+}
+
+function shouldInterceptOpenAITokenizerCount(options) {
+    if (!isOpenAITokenizerBulkEnabled() || options?.async === false) {
+        return false;
+    }
+
+    const method = String(options?.method || options?.type || 'GET').toUpperCase();
+    if (method !== 'POST') {
+        return false;
+    }
+
+    const url = toOpenAITokenizerUrl(options?.url);
+    return Boolean(url && url.origin === location.origin && url.pathname === '/api/tokenizers/openai/count');
+}
+
+function handleOpenAITokenizerBulkAjax(thisArg, args, options) {
+    const hitPromise = getOpenAITokenizerBulkAjaxHit(options);
+    if (!hitPromise) {
+        return null;
+    }
+
+    const state = getOpenAITokenizerBulkState();
+    return hitPromise
+        .then(hit => {
+            if (!hit) {
+                state.stats.ajaxFallbacks += 1;
+                return state.originalAjax.apply(thisArg, args);
+            }
+
+            state.stats.ajaxHits += 1;
+            const payload = { token_count: hit.count };
+            callJQueryAjaxCallback(options.success, payload, 'success', null);
+            callJQueryAjaxCallback(options.complete, null, 'success');
+            return payload;
+        })
+        .catch(error => {
+            state.stats.ajaxErrors += 1;
+            console.debug(`${LOG_PREFIX} OpenAI tokenizer bulk ajax fallback`, error);
+            return state.originalAjax.apply(thisArg, args);
+        });
+}
+
+function getOpenAITokenizerBulkAjaxHit(options) {
+    const state = getOpenAITokenizerBulkState();
+    const url = toOpenAITokenizerUrl(options?.url);
+    const message = getOpenAITokenizerAjaxMessage(options);
+    const model = url?.searchParams?.get('model') || getTokenizerModel();
+
+    if (!message || !model) {
+        state.stats.ajaxMisses += 1;
+        return null;
+    }
+
+    const key = getOpenAITokenizerCacheKey(model, message);
+    const cached = state.cache.get(key);
+    if (typeof cached === 'number') {
+        return Promise.resolve({ count: cached });
+    }
+
+    if (!state.pending) {
+        state.stats.ajaxMisses += 1;
+        return null;
+    }
+
+    return Promise.resolve(state.pending).then(() => {
+        const next = state.cache.get(key);
+        if (typeof next === 'number') {
+            return { count: next };
+        }
+
+        state.stats.ajaxMisses += 1;
+        return null;
+    });
+}
+
+function getOpenAITokenizerAjaxMessage(options) {
+    try {
+        const data = typeof options?.data === 'string' ? JSON.parse(options.data) : options?.data;
+        if (!Array.isArray(data) || data.length !== 1) {
+            return null;
+        }
+
+        return normalizeOpenAITokenizerMessage(data[0], { allowEmptyContent: true });
+    } catch {
+        return null;
+    }
+}
+
+async function prepareOpenAITokenizerBulkMessages(context = {}) {
+    const state = getOpenAITokenizerBulkState();
+    state.stats.prepareCalls += 1;
+
+    if (!isOpenAITokenizerBulkEnabled()) {
+        return false;
+    }
+
+    const model = getTokenizerModel();
+    const messages = collectOpenAITokenizerBulkMessages(context);
+    const uniqueMessages = [];
+    const seen = new Set();
+
+    for (const message of messages) {
+        const key = getOpenAITokenizerCacheKey(model, message);
+        if (seen.has(key) || state.cache.has(key)) {
+            continue;
+        }
+
+        seen.add(key);
+        uniqueMessages.push({ key, message });
+    }
+
+    if (uniqueMessages.length === 0) {
+        state.stats.prepareEmpty += 1;
+        return true;
+    }
+
+    const pending = fetchOpenAITokenizerBulkCounts(model, uniqueMessages)
+        .then(counts => {
+            counts.forEach((count, index) => {
+                setOpenAITokenizerBulkCache(uniqueMessages[index].key, count);
+            });
+            state.stats.prepareMessages += uniqueMessages.length;
+            return true;
+        })
+        .catch(error => {
+            state.stats.prepareErrors += 1;
+            throw error;
+        })
+        .finally(() => {
+            if (state.pending === pending) {
+                state.pending = null;
+            }
+        });
+
+    state.pending = pending;
+    return pending;
+}
+
+function collectOpenAITokenizerBulkMessages(context) {
+    const entries = [];
+    const add = (message, options = {}) => {
+        const normalized = normalizeOpenAITokenizerMessage(message, options);
+        if (normalized) {
+            entries.push(normalized);
+        }
+    };
+
+    add({ role: 'system', content: context.newChatContent });
+    add({ role: 'user', content: context.sendIfEmpty });
+    add({ role: 'system', content: context.newExampleChatContent });
+
+    collectPromptCollectionTokenMessages(context.prompts, add);
+    collectChatHistoryTokenMessages(context, add);
+    collectDialogueExampleTokenMessages(context.messageExamples, add);
+
+    return entries;
+}
+
+function collectPromptCollectionTokenMessages(prompts, add) {
+    const collection = Array.isArray(prompts?.collection) ? prompts.collection : [];
+    for (const prompt of collection) {
+        add({
+            role: prompt?.role || 'system',
+            content: prompt?.content,
+        });
+    }
+}
+
+function collectChatHistoryTokenMessages(context, add) {
+    const sourceMessages = Array.isArray(context.messages) ? context.messages : [];
+    const namesInCompletion = Number(context.oaiSettings?.names_behavior) === 1;
+    const manager = context.promptManager || promptManager;
+
+    for (let index = 0; index < sourceMessages.length; index++) {
+        const source = sourceMessages[index];
+        if (!source || typeof source !== 'object') {
+            continue;
+        }
+
+        const prompt = {
+            ...source,
+            identifier: `chatHistory-${sourceMessages.length - index}`,
+        };
+        const prepared = preparePromptForOpenAITokenizerBulk(prompt, manager);
+        const message = {
+            role: prepared?.role || source.role || 'system',
+            content: prepared?.content ?? source.content,
+        };
+
+        add(message);
+
+        if (namesInCompletion && source.name) {
+            const name = typeof manager?.isValidName === 'function' && manager.isValidName(source.name)
+                ? source.name
+                : typeof manager?.sanitizeName === 'function'
+                    ? manager.sanitizeName(source.name)
+                    : source.name;
+            add({ ...message, name });
+        }
+
+        if (Array.isArray(source.invocations)) {
+            for (const invocation of source.invocations) {
+                add({ role: 'tool', content: invocation?.result || '[No content]' });
+            }
+        }
+    }
+}
+
+function collectDialogueExampleTokenMessages(messageExamples, add) {
+    if (!Array.isArray(messageExamples)) {
+        return;
+    }
+
+    for (const dialogue of messageExamples) {
+        if (!Array.isArray(dialogue)) {
+            continue;
+        }
+
+        for (const prompt of dialogue) {
+            const message = {
+                role: 'system',
+                content: prompt?.content || '',
+            };
+            add(message);
+            if (prompt?.name) {
+                add({ ...message, name: prompt.name });
+            }
+        }
+    }
+}
+
+function preparePromptForOpenAITokenizerBulk(prompt, manager) {
+    try {
+        if (typeof manager?.preparePrompt === 'function') {
+            return manager.preparePrompt(prompt);
+        }
+    } catch (error) {
+        console.debug(`${LOG_PREFIX} Failed to prepare OpenAI tokenizer bulk prompt`, error);
+    }
+
+    return prompt;
+}
+
+function normalizeOpenAITokenizerMessage(message, { allowEmptyContent = false } = {}) {
+    if (!message || typeof message !== 'object') {
+        return null;
+    }
+
+    const normalized = {};
+    normalized.role = message.role || 'system';
+
+    if (Object.prototype.hasOwnProperty.call(message, 'content') && message.content !== undefined) {
+        normalized.content = message.content;
+    }
+    if (message.name !== undefined && message.name !== null && message.name !== '') {
+        normalized.name = message.name;
+    }
+    if (message.tool_calls !== undefined) {
+        normalized.tool_calls = message.tool_calls;
+    }
+    if (message.reasoning !== undefined && message.reasoning !== null && message.reasoning !== '') {
+        normalized.reasoning = message.reasoning;
+    }
+
+    const hasContent = Object.prototype.hasOwnProperty.call(normalized, 'content');
+    const hasToolCalls = Object.prototype.hasOwnProperty.call(normalized, 'tool_calls');
+    if (!hasContent && !hasToolCalls) {
+        return null;
+    }
+
+    if (!allowEmptyContent && typeof normalized.content === 'string' && normalized.content.length === 0 && !hasToolCalls && !normalized.name) {
+        return null;
+    }
+
+    return normalized;
+}
+
+async function fetchOpenAITokenizerBulkCounts(model, entries) {
+    const headers = new Headers(getRequestHeaders());
+    headers.set('content-type', 'application/json');
+
+    const response = await fetch(BAIBAOKU_TOKENIZER_BULK_COUNT_URL, {
+        method: 'POST',
+        headers,
+        cache: 'no-store',
+        body: JSON.stringify({
+            model,
+            messages: entries.map(entry => entry.message),
+        }),
+    });
+    const payload = await response.json().catch(() => null);
+    const counts = payload?.data?.counts;
+
+    if (!response.ok || payload?.ok !== true || !Array.isArray(counts) || counts.length !== entries.length) {
+        throw new Error(payload?.error?.message || `BaiBaoKu bulk count failed: HTTP ${response.status}`);
+    }
+
+    return counts.map(count => Number(count));
+}
+
+function setOpenAITokenizerBulkCache(key, count) {
+    const value = Number(count);
+    if (!key || !Number.isFinite(value)) {
+        return;
+    }
+
+    const state = getOpenAITokenizerBulkState();
+    state.cache.set(key, value);
+    while (state.cache.size > OPENAI_TOKENIZER_BULK_CACHE_LIMIT) {
+        const oldestKey = state.cache.keys().next().value;
+        state.cache.delete(oldestKey);
+    }
+}
+
+function getOpenAITokenizerCacheKey(model, message) {
+    return `${model}-${getStringHash(JSON.stringify(message))}`;
+}
+
+function isOpenAITokenizerBulkEnabled() {
+    if (settings.tokenizerBulkCountEnabled === false) {
+        return false;
+    }
+
+    const earlyBridge = globalThis.__baibaokuEarlyBridge;
+    if (typeof earlyBridge?.isTokenizerBulkCountEnabled === 'function') {
+        return earlyBridge.isTokenizerBulkCountEnabled() !== false;
+    }
+
+    return earlyBridge?.tokenizerBulkCountEnabled !== false;
+}
+
+function toOpenAITokenizerUrl(value) {
+    try {
+        if (typeof value === 'string') return new URL(value, location.href);
+        if (value instanceof URL) return new URL(value.href, location.href);
+        if (value && typeof value.url === 'string') return new URL(value.url, location.href);
+    } catch {
+        return null;
+    }
+
+    return null;
+}
+
+function callJQueryAjaxCallback(callback, ...args) {
+    if (typeof callback !== 'function') {
+        return;
+    }
+
+    try {
+        callback(...args);
+    } catch (error) {
+        console.debug(`${LOG_PREFIX} OpenAI tokenizer bulk ajax callback failed`, error);
+    }
 }
 
 function isPromptManagerTokenRefreshEnabled() {

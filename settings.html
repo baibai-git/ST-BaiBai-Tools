@@ -231,6 +231,11 @@
                                 <input id="bai_bai_toolkit_baibaoku_settings_acceleration_enabled" type="checkbox" class="checkbox">
                                 <span>Settings get/save 加速</span>
                             </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_extension_manifest_bundle_enabled"
+                                title="加载扩展时，通过柏宝库一次性获取扩展清单和 manifest 缓存，减少大量 /scripts/extensions/.../manifest.json 请求；关闭后完全走 SillyTavern 原生请求。">
+                                <input id="bai_bai_toolkit_extension_manifest_bundle_enabled" type="checkbox" class="checkbox">
+                                <span>扩展 Manifest 合并请求</span>
+                            </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_fast_character_list_enabled"
                                 title="加载角色列表时，将 SillyTavern 原本的 /api/characters/all 空请求替换为柏宝库的快速角色列表接口；接口不可用时自动退回原请求。">
                                 <input id="bai_bai_toolkit_fast_character_list_enabled" type="checkbox" class="checkbox">
@@ -243,8 +248,13 @@
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_progressive_chat_loading_enabled"
                                 title="进入大聊天时，先通过柏宝库返回尾部楼层并锁定发送/编辑/保存，后台补全完整聊天后再解锁；接口不可用时自动退回原生加载。">
-                                <input id="bai_bai_toolkit_progressive_chat_loading_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_progressive_chat_loading_enabled" type="checkbox" class="checkbox" disabled>
                                 <span>长聊天分批加载</span>
+                            </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_save_generate_enabled"
+                                title="普通单角色 Chat Completion 回复改用柏宝库 save-generate，后端生成完成后自动写入聊天文件；保存失败时保留 SillyTavern 原生保存兜底。">
+                                <input id="bai_bai_toolkit_save_generate_enabled" type="checkbox" class="checkbox">
+                                <span>生成结果后端自动保存</span>
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_tokenizer_bulk_count_enabled"
                                 title="刷新 Prompt Manager token 统计时使用 BaiBaoKu 批量计数接口，减少切换模型时的 token 计算请求。">
