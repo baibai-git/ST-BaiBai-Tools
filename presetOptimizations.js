@@ -42,6 +42,8 @@ const PRESET_VUE_COLLAPSE_ANIMATION_MS = 260;
 const PRESET_VUE_DRAG_ANIMATION_MS = 180;
 const PRESET_VUE_DROP_SAVE_DELAY_MS = 40;
 const PRESET_GROUP_COMPAT_CHOICE_RESULT_BASE = 1001;
+const PRESET_VUE_TOUCH_DRAG_DELAY_MS = 480;
+const PRESET_VUE_TOUCH_START_THRESHOLD_PX = 12;
 const PRESET_DRAG_LONG_PRESS_MS = 300;
 const PRESET_DRAG_CANCEL_DISTANCE_PX = 12;
 const PRESET_DRAG_CLICK_SUPPRESS_MS = 500;
@@ -1388,6 +1390,7 @@ function renderPresetVuePromptDraggable(h, vueDraggableNext, model) {
             }
         },
     };
+    applyPresetVueTouchDragOptions(draggableProps);
 
     if (handleSelector) {
         draggableProps.handle = handleSelector;
@@ -1527,6 +1530,7 @@ function renderPresetVuePromptGroup(h, vueDraggableNext, item) {
             }
         },
     };
+    applyPresetVueTouchDragOptions(draggableProps);
 
     if (handleSelector) {
         draggableProps.handle = handleSelector;
@@ -1598,6 +1602,19 @@ function renderPresetVuePromptGroupBody(h, vueDraggableNext, item, draggableProp
             }),
         ]),
     ]);
+}
+
+function applyPresetVueTouchDragOptions(draggableProps) {
+    if (!isMobile()) {
+        return;
+    }
+
+    Object.assign(draggableProps, {
+        delay: PRESET_VUE_TOUCH_DRAG_DELAY_MS,
+        delayOnTouchOnly: true,
+        touchStartThreshold: PRESET_VUE_TOUCH_START_THRESHOLD_PX,
+        fallbackTolerance: PRESET_VUE_TOUCH_START_THRESHOLD_PX,
+    });
 }
 
 function getPresetVuePromptDragHandleSelector() {
