@@ -474,14 +474,12 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
     display: grid;
     grid-template-rows: 1fr;
     min-height: 0;
-    opacity: 1;
     overflow: hidden;
-    transition: grid-template-rows ${PRESET_VUE_EXPAND_ANIMATION_MS}ms ease, opacity ${PRESET_VUE_EXPAND_ANIMATION_MS}ms ease;
+    transition: grid-template-rows ${PRESET_VUE_EXPAND_ANIMATION_MS}ms ease;
 }
 
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-collapsed .bai-bai-preset-group-body {
     grid-template-rows: 0fr;
-    opacity: 0;
     pointer-events: none;
     transition-duration: ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms;
 }
@@ -1443,12 +1441,10 @@ function renderPresetVuePromptDraggable(h, vueDraggableNext, model) {
         dragClass: 'bai-bai-preset-vue-sortable-drag',
         move: isPresetVuePromptTopLevelDragMoveAllowed,
         key: `draggable-${model.renderKey}`,
-        onChoose: () => setPresetVuePromptDragging(model, true),
         onStart: () => {
             setPresetVuePromptDragging(model, true);
             capturePresetVuePromptDragSnapshot(model);
         },
-        onUnchoose: () => setPresetVuePromptDragging(model, false),
         onEnd: () => {
             setPresetVuePromptDragging(model, false);
             if (consumePresetVuePromptDragChange(model)) {
@@ -1600,13 +1596,11 @@ function renderPresetVuePromptGroup(h, vueDraggableNext, item) {
         chosenClass: 'bai-bai-preset-vue-sortable-chosen',
         dragClass: 'bai-bai-preset-vue-sortable-drag',
         move: isPresetVuePromptGroupDragMoveAllowed,
-        onChoose: () => setPresetVuePromptDragging(getPresetVuePromptListManagerState().state, true),
         onStart: () => {
             const model = getPresetVuePromptListManagerState().state;
             setPresetVuePromptDragging(model, true);
             capturePresetVuePromptDragSnapshot(model);
         },
-        onUnchoose: () => setPresetVuePromptDragging(getPresetVuePromptListManagerState().state, false),
         onEnd: () => {
             const model = getPresetVuePromptListManagerState().state;
             setPresetVuePromptDragging(model, false);
@@ -1630,7 +1624,18 @@ function renderPresetVuePromptGroup(h, vueDraggableNext, item) {
         'data-preset-group-id': item.groupId,
         key: item.id,
     }, [
-        h('div', { class: 'bai-bai-preset-group-header bai-bai-preset-group-drag-surface' }, [
+        h('div', {
+            class: 'bai-bai-preset-group-header bai-bai-preset-group-drag-surface',
+            onClick: event => {
+                const target = event.target instanceof Element ? event.target : null;
+
+                if (target?.closest('.bai-bai-preset-group-actions, .bai-bai-preset-group-toggle')) {
+                    return;
+                }
+
+                togglePresetVuePromptGroupCollapsed(item.groupId);
+            },
+        }, [
             h('span', { class: 'bai-bai-preset-group-title', title: item.name }, [
                 h('span', {
                     class: [
