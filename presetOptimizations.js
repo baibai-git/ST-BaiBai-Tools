@@ -1842,7 +1842,9 @@ function readCurrentPresetPromptGroupExtensionState(validPromptIds = getCurrentP
     }
 
     const groupState = {
-        groups: Array.isArray(value.groups) ? structuredClone(value.groups) : [],
+        groups: Array.isArray(value.groups)
+            ? structuredClone(value.groups).map(group => ({ ...group, collapsed: true }))
+            : [],
         prompts: value.prompts && typeof value.prompts === 'object' ? structuredClone(value.prompts) : {},
     };
 
@@ -1887,7 +1889,7 @@ function convertCompatEntryGroupingToPresetPromptGroupState(entryGrouping, promp
             id: groupId,
             name: String(entry.name || t`未命名分组`),
             order: index,
-            collapsed: Boolean(entry.collapsed),
+            collapsed: true,
         });
 
         for (const promptId of promptIds.slice(from, to + 1)) {
