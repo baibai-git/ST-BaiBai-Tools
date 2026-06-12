@@ -321,12 +321,11 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
     padding: 0;
     border: 0;
     background: transparent;
-    transition: margin ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms ease, opacity ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms ease;
+    transition: gap ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms ease, opacity ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms ease;
 }
 
-#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.bai-bai-preset-list-collapsing,
-#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group.bai-bai-preset-group-collapsing {
-    overflow: hidden;
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-collapsed {
+    gap: 0;
 }
 
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-header {
@@ -362,6 +361,20 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
     opacity: 0.65;
 }
 
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-body {
+    display: grid;
+    grid-template-rows: 1fr;
+    opacity: 1;
+    overflow: hidden;
+    transition: grid-template-rows ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms ease, opacity ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms ease;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-collapsed .bai-bai-preset-group-body {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    pointer-events: none;
+}
+
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-list {
     display: flex;
     flex-direction: column;
@@ -369,12 +382,8 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
     margin: 0;
     padding: 0;
     list-style: none;
-}
-
-#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-list.bai-bai-preset-collapse-enter-active,
-#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-list.bai-bai-preset-collapse-leave-active {
+    min-height: 0;
     overflow: hidden;
-    will-change: height, opacity;
 }
 
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-list:empty {
@@ -395,6 +404,7 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
 
 @media (prefers-reduced-motion: reduce) {
     #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group,
+    #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-body,
     #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-list {
         transition: none !important;
     }
@@ -1286,136 +1296,19 @@ function renderPresetVuePromptGroup(h, vueDraggableNext, item) {
             ]),
             h('span'),
         ]),
-        renderPresetVuePromptGroupListTransition(h, vueDraggableNext, item, draggableProps),
+        renderPresetVuePromptGroupBody(h, vueDraggableNext, item, draggableProps),
     ]);
 }
 
-function renderPresetVuePromptGroupListTransition(h, vueDraggableNext, item, draggableProps) {
-    const transition = getPresetVuePromptListManagerState().vue?.Transition;
-    const listNode = item.collapsed
-        ? null
-        : h(vueDraggableNext.VueDraggableNext, draggableProps, {
+function renderPresetVuePromptGroupBody(h, vueDraggableNext, item, draggableProps) {
+    return h('div', {
+        class: 'bai-bai-preset-group-body',
+        'aria-hidden': item.collapsed ? 'true' : 'false',
+    }, [
+        h(vueDraggableNext.VueDraggableNext, draggableProps, {
             default: () => (item.children ?? []).map(child => renderPresetVuePromptRow(h, child)),
-        });
-
-    if (!transition) {
-        return listNode;
-    }
-
-    return h(transition, getPresetVueCollapseTransitionProps(), {
-        default: () => listNode,
-    });
-}
-
-function getPresetVueCollapseTransitionProps() {
-    return {
-        name: 'bai-bai-preset-collapse',
-        onBeforeEnter: element => {
-            preparePresetVueCollapseElement(element);
-            element.style.height = '0px';
-            element.style.opacity = '0';
-        },
-        onEnter: (element, done) => {
-            animatePresetVueCollapseElement(element, `${element.scrollHeight}px`, '1', done);
-        },
-        onAfterEnter: cleanupPresetVueCollapseElement,
-        onEnterCancelled: cleanupPresetVueCollapseElement,
-        onBeforeLeave: element => {
-            preparePresetVueCollapseElement(element);
-            element.style.height = `${element.scrollHeight}px`;
-            element.style.opacity = '1';
-        },
-        onLeave: (element, done) => {
-            element.offsetHeight;
-            animatePresetVueCollapseElement(element, '0px', '0', done);
-        },
-        onAfterLeave: cleanupPresetVueCollapseElement,
-        onLeaveCancelled: cleanupPresetVueCollapseElement,
-    };
-}
-
-function preparePresetVueCollapseElement(element) {
-    if (!(element instanceof HTMLElement)) {
-        return;
-    }
-
-    setPresetVueCollapseAnimating(element, true);
-    element.style.overflow = 'hidden';
-    element.style.transition = `height ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms ease, opacity ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms ease`;
-}
-
-function animatePresetVueCollapseElement(element, height, opacity, done) {
-    if (!(element instanceof HTMLElement)) {
-        done?.();
-        return;
-    }
-
-    if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
-        element.style.height = height;
-        element.style.opacity = opacity;
-        done?.();
-        return;
-    }
-
-    const finish = oncePresetVueCollapseTransitionDone(element, done);
-    requestAnimationFrame(() => {
-        element.style.height = height;
-        element.style.opacity = opacity;
-    });
-    setTimeout(finish, PRESET_VUE_COLLAPSE_ANIMATION_MS + 40);
-}
-
-function oncePresetVueCollapseTransitionDone(element, done) {
-    let finished = false;
-    const finish = () => {
-        if (finished) {
-            return;
-        }
-
-        finished = true;
-        element.removeEventListener('transitionend', handleTransitionEnd);
-        done?.();
-    };
-    const handleTransitionEnd = event => {
-        if (event.target === element && event.propertyName === 'height') {
-            finish();
-        }
-    };
-
-    element.addEventListener('transitionend', handleTransitionEnd);
-    return finish;
-}
-
-function cleanupPresetVueCollapseElement(element) {
-    if (!(element instanceof HTMLElement)) {
-        return;
-    }
-
-    element.style.height = '';
-    element.style.opacity = '';
-    element.style.overflow = '';
-    element.style.transition = '';
-    setPresetVueCollapseAnimating(element, false);
-}
-
-function setPresetVueCollapseAnimating(element, animating) {
-    const list = animating
-        ? element.closest(PRESET_PROMPT_MANAGER_LIST_SELECTOR)
-        : element.__baiBaiPresetCollapseList;
-    const group = animating
-        ? element.closest('.bai-bai-preset-group')
-        : element.__baiBaiPresetCollapseGroup;
-
-    if (animating) {
-        element.__baiBaiPresetCollapseList = list;
-        element.__baiBaiPresetCollapseGroup = group;
-    } else {
-        delete element.__baiBaiPresetCollapseList;
-        delete element.__baiBaiPresetCollapseGroup;
-    }
-
-    list?.classList.toggle('bai-bai-preset-list-collapsing', Boolean(animating));
-    group?.classList.toggle('bai-bai-preset-group-collapsing', Boolean(animating));
+        }),
+    ]);
 }
 
 function getPresetVuePromptDragHandleSelector() {
