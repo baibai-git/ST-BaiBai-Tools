@@ -372,6 +372,10 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
     opacity: 0.65;
 }
 
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-row-group-start {
+    cursor: pointer;
+}
+
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-body {
     display: grid;
     grid-template-rows: 1fr;
@@ -410,7 +414,16 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
 }
 
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-range-selectable {
-    cursor: crosshair;
+    cursor: crosshair !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-range-selectable * {
+    cursor: crosshair !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-range-selectable .prompt_manager_prompt_controls {
+    pointer-events: none;
+    opacity: 0.45;
 }
 
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-range-start,
@@ -959,6 +972,7 @@ function createPresetVuePromptListModel() {
             name: '',
             startId: null,
             endId: null,
+            hoverId: null,
         },
     };
 }
@@ -1038,7 +1052,7 @@ function buildPresetVuePromptListItems() {
                     type: 'group',
                     groupId: item.groupId,
                     group,
-                    name: group?.name ?? t`Unnamed group`,
+                    name: group?.name ?? t`未命名分组`,
                     collapsed: Boolean(group?.collapsed),
                     count: 0,
                     children: [],
@@ -1079,7 +1093,7 @@ function renderPresetVuePromptListHeader(h, model) {
             selecting
                 ? h('span', {
                     class: 'menu_button fa-solid fa-xmark',
-                    title: t`Cancel group selection`,
+                    title: t`取消分组选择`,
                     onClick: event => {
                         event.preventDefault();
                         event.stopPropagation();
@@ -1088,7 +1102,7 @@ function renderPresetVuePromptListHeader(h, model) {
                 })
                 : h('span', {
                     class: 'menu_button fa-solid fa-folder-plus',
-                    title: t`Create prompt group`,
+                    title: t`创建预设分组`,
                     onClick: event => {
                         event.preventDefault();
                         event.stopPropagation();
@@ -1243,7 +1257,7 @@ function renderPresetVuePromptGroup(h, vueDraggableNext, item) {
     const handleSelector = getPresetVuePromptDragHandleSelector();
     const draggableProps = {
         tag: 'ul',
-        class: 'bai-bai-preset-group-list text_pole',
+        class: 'bai-bai-preset-group-list',
         list: item.children,
         group: {
             name: 'bai-bai-preset-prompts',
@@ -1298,7 +1312,7 @@ function renderPresetVuePromptGroup(h, vueDraggableNext, item) {
                         'fa-solid',
                         item.collapsed ? 'fa-chevron-right' : 'fa-chevron-down',
                     ],
-                    title: item.collapsed ? t`Expand group` : t`Collapse group`,
+                    title: item.collapsed ? t`展开分组` : t`收起分组`,
                     onClick: event => {
                         event.preventDefault();
                         event.stopPropagation();
@@ -1313,7 +1327,7 @@ function renderPresetVuePromptGroup(h, vueDraggableNext, item) {
             h('span', { class: 'bai-bai-preset-group-actions' }, [
                 h('span', {
                     class: 'menu_button fa-solid fa-pencil',
-                    title: t`Rename group`,
+                    title: t`重命名分组`,
                     onClick: event => {
                         event.preventDefault();
                         event.stopPropagation();
@@ -1322,7 +1336,7 @@ function renderPresetVuePromptGroup(h, vueDraggableNext, item) {
                 }),
                 h('span', {
                     class: 'menu_button fa-solid fa-trash',
-                    title: t`Delete group`,
+                    title: t`删除分组`,
                     onClick: event => {
                         event.preventDefault();
                         event.stopPropagation();
@@ -1387,7 +1401,9 @@ function renderPresetVuePromptRow(h, item) {
         'data-pm-identifier': prompt.identifier,
         'data-preset-group-id': item.groupId || '',
         key: prompt.identifier,
+        onClickCapture: event => handlePresetVuePromptRangeSelectionClick(manager.state, item, event),
         onClick: event => handlePresetVuePromptRangeSelectionClick(manager.state, item, event),
+        onMouseenter: () => updatePresetVuePromptRangeSelectionHover(manager.state, item),
     }, [
         h('span', { class: 'drag-handle ui-sortable-handle' }, '\u2630'),
         renderPresetVuePromptNameCell(h, prompt, prefix),
@@ -1505,7 +1521,7 @@ function normalizePresetPromptGroupState(groupState, validPromptIds = null) {
         .filter(group => group && typeof group === 'object' && group.id)
         .map((group, index) => ({
             id: String(group.id),
-            name: String(group.name || t`Unnamed group`),
+            name: String(group.name || t`未命名分组`),
             order: Number.isFinite(Number(group.order)) ? Number(group.order) : index,
             collapsed: Boolean(group.collapsed),
         }))
@@ -1542,17 +1558,22 @@ function savePresetPromptGroupSettings() {
     }
 }
 
-async function startPresetVuePromptGroupRangeSelection(model) {
+async function startPresetVuePromptGroupRangeSelection(model, { startId = null } = {}) {
     const promptIds = getPresetVuePromptFlatIds(model);
 
     if (promptIds.length === 0) {
-        toastr.warning(t`No prompts available for grouping.`);
+        toastr.warning(t`没有可用于分组的预设条目。`);
         return;
     }
 
-    const name = await callGenericPopup(t`Prompt group name`, POPUP_TYPE.INPUT, '', {
-        okButton: t`Save`,
-        cancelButton: t`Cancel`,
+    if (startId && !promptIds.includes(startId)) {
+        toastr.warning(t`不能将这个预设条目作为分组起点。`);
+        return;
+    }
+
+    const name = await callGenericPopup(t`预设分组名称`, POPUP_TYPE.INPUT, '', {
+        okButton: t`保存`,
+        cancelButton: t`取消`,
     });
 
     if (typeof name !== 'string') {
@@ -1562,18 +1583,19 @@ async function startPresetVuePromptGroupRangeSelection(model) {
     const trimmedName = name.trim();
 
     if (!trimmedName) {
-        toastr.warning(t`Group name cannot be empty.`);
+        toastr.warning(t`分组名称不能为空。`);
         return;
     }
 
     model.rangeSelection = {
         active: true,
         name: trimmedName,
-        startId: null,
+        startId,
         endId: null,
+        hoverId: startId,
     };
     getPresetVuePromptListManagerState().dragSnapshot = null;
-    toastr.info(t`Select the first prompt for the group.`);
+    toastr.info(startId ? t`请选择分组的结束条目。` : t`请选择分组的起始条目。`);
 }
 
 function cancelPresetVuePromptGroupRangeSelection(model) {
@@ -1586,6 +1608,7 @@ function cancelPresetVuePromptGroupRangeSelection(model) {
         name: '',
         startId: null,
         endId: null,
+        hoverId: null,
     };
 }
 
@@ -1594,18 +1617,21 @@ function handlePresetVuePromptRangeSelectionClick(model, item, event) {
         return;
     }
 
-    const target = event?.target instanceof Element ? event.target : null;
-
-    if (target?.closest(PRESET_DRAG_INTERACTIVE_SELECTOR)) {
-        return;
-    }
-
     event.preventDefault?.();
     event.stopPropagation?.();
+    event.stopImmediatePropagation?.();
 
     if (!model.rangeSelection.startId) {
         model.rangeSelection.startId = item.id;
-        toastr.info(t`Select the last prompt for the group.`);
+        model.rangeSelection.hoverId = item.id;
+        toastr.info(t`请选择分组的结束条目。`);
+        return;
+    }
+
+    if (model.rangeSelection.startId === item.id && !model.rangeSelection.endId) {
+        model.rangeSelection.startId = null;
+        model.rangeSelection.hoverId = null;
+        toastr.info(t`已取消起点选择，请重新选择分组的起始条目。`);
         return;
     }
 
@@ -1613,16 +1639,24 @@ function handlePresetVuePromptRangeSelectionClick(model, item, event) {
     void finishPresetVuePromptGroupRangeSelection(model);
 }
 
+function updatePresetVuePromptRangeSelectionHover(model, item) {
+    if (!model?.rangeSelection?.active || !model.rangeSelection.startId || model.rangeSelection.endId || item?.type !== 'prompt') {
+        return;
+    }
+
+    model.rangeSelection.hoverId = item.id;
+}
+
 async function finishPresetVuePromptGroupRangeSelection(model) {
     const rangeIds = getPresetVuePromptRangeIds(model);
 
     if (rangeIds.length === 0) {
-        toastr.warning(t`No prompts selected for grouping.`);
+        toastr.warning(t`没有选中可分组的预设条目。`);
         cancelPresetVuePromptGroupRangeSelection(model);
         return;
     }
 
-    const confirmed = await callGenericPopup(t`Create group from selected prompts?`, POPUP_TYPE.CONFIRM);
+    const confirmed = await callGenericPopup(t`要用选中的预设条目创建分组吗？`, POPUP_TYPE.CONFIRM);
 
     if (!confirmed) {
         model.rangeSelection.endId = null;
@@ -1671,16 +1705,17 @@ function getPresetVuePromptItemsFromModel(model = getPresetVuePromptListManagerS
     return promptItems;
 }
 
-function getPresetVuePromptRangeIds(model) {
+function getPresetVuePromptRangeIds(model, { includeHover = false } = {}) {
     const selection = model?.rangeSelection;
+    const rangeEndId = selection?.endId || (includeHover ? selection?.hoverId : null);
 
-    if (!selection?.startId || !selection?.endId) {
+    if (!selection?.startId || !rangeEndId) {
         return [];
     }
 
     const ids = getPresetVuePromptFlatIds(model);
     const startIndex = ids.indexOf(selection.startId);
-    const endIndex = ids.indexOf(selection.endId);
+    const endIndex = ids.indexOf(rangeEndId);
 
     if (startIndex < 0 || endIndex < 0) {
         return [];
@@ -1704,11 +1739,11 @@ function getPresetVuePromptRangeClasses(model, item) {
         classes.push('bai-bai-preset-range-start');
     }
 
-    if (selection.endId === item.id) {
+    if ((selection.endId || selection.hoverId) === item.id && selection.startId) {
         classes.push('bai-bai-preset-range-end');
     }
 
-    const rangeIds = getPresetVuePromptRangeIds(model);
+    const rangeIds = getPresetVuePromptRangeIds(model, { includeHover: true });
 
     if (rangeIds.includes(item.id)) {
         classes.push('bai-bai-preset-range-inside');
@@ -1747,9 +1782,9 @@ async function renamePresetVuePromptGroup(groupId) {
         return;
     }
 
-    const name = await callGenericPopup(t`Prompt group name`, POPUP_TYPE.INPUT, group.name || '', {
-        okButton: t`Save`,
-        cancelButton: t`Cancel`,
+    const name = await callGenericPopup(t`预设分组名称`, POPUP_TYPE.INPUT, group.name || '', {
+        okButton: t`保存`,
+        cancelButton: t`取消`,
     });
 
     if (typeof name !== 'string') {
@@ -1759,7 +1794,7 @@ async function renamePresetVuePromptGroup(groupId) {
     const trimmedName = name.trim();
 
     if (!trimmedName) {
-        toastr.warning(t`Group name cannot be empty.`);
+        toastr.warning(t`分组名称不能为空。`);
         return;
     }
 
@@ -1776,7 +1811,7 @@ async function deletePresetVuePromptGroup(groupId) {
         return;
     }
 
-    const confirmed = await callGenericPopup(t`Delete this prompt group? Prompts will remain in place.`, POPUP_TYPE.CONFIRM);
+    const confirmed = await callGenericPopup(t`要删除这个预设分组吗？预设条目会保留在原位置。`, POPUP_TYPE.CONFIRM);
 
     if (!confirmed) {
         return;
@@ -1803,8 +1838,22 @@ function renderPresetVuePromptControls(h, prompt, item) {
             ? false
             : !(promptManager.configuration.toggleDisabled ?? []).includes(prompt.identifier)
     );
+    const selecting = Boolean(getPresetVuePromptListManagerState().state?.rangeSelection?.active);
+    const controls = [];
 
-    return [
+    if (!selecting) {
+        controls.push(h('span', {
+            title: t`从这里创建分组`,
+            class: 'bai-bai-preset-row-group-start fa-solid fa-folder-plus fa-xs',
+            onClick: event => {
+                event.preventDefault();
+                event.stopPropagation();
+                void startPresetVuePromptGroupRangeSelection(getPresetVuePromptListManagerState().state, { startId: item.id });
+            },
+        }));
+    }
+
+    controls.push(
         canDelete
             ? h('span', {
                 title: 'Remove',
@@ -1825,7 +1874,9 @@ function renderPresetVuePromptControls(h, prompt, item) {
                 ],
             })
             : h('span', { class: 'fa-solid' }),
-    ];
+    );
+
+    return controls;
 }
 
 function savePresetVuePromptOrderFromModelSafely() {
@@ -2981,6 +3032,10 @@ function handlePresetListActionClick(event) {
         return;
     }
 
+    if (handlePresetVuePromptRangeSelectionDelegatedClick(event, target)) {
+        return;
+    }
+
     const action = target.closest('.prompt-manager-detach-action, .prompt-manager-inspect-action, .prompt-manager-edit-action');
 
     if (!action) {
@@ -3615,6 +3670,30 @@ async function refreshPromptManagerTokens() {
     } catch (error) {
         console.debug(`${LOG_PREFIX} Failed to refresh prompt manager token counts`, error);
     }
+}
+
+function handlePresetVuePromptRangeSelectionDelegatedClick(event, target) {
+    const manager = getPresetVuePromptListManagerState();
+    const model = manager.state;
+
+    if (!model?.rangeSelection?.active) {
+        return false;
+    }
+
+    const row = target.closest(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_prompt[data-pm-identifier]`);
+
+    if (!(row instanceof HTMLElement)) {
+        return false;
+    }
+
+    const item = getPresetVuePromptItemsFromModel(model).find(item => item?.id === row.dataset.pmIdentifier);
+
+    if (!item) {
+        return false;
+    }
+
+    handlePresetVuePromptRangeSelectionClick(model, item, event);
+    return true;
 }
 
 async function refreshPromptManagerTokensWithBaibaokuBulkCount() {
