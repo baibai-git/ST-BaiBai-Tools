@@ -71,7 +71,7 @@ const PRESET_PROMPT_CODEMIRROR_EDITOR_CLASS = 'bai-bai-toolkit-preset-prompt-cod
 const PRESET_PROMPT_SOURCE_HIDDEN_CLASS = 'bai-bai-toolkit-preset-prompt-source-hidden';
 const PRESET_PROMPT_CODEMIRROR_READONLY_CLASS = 'bai-bai-toolkit-preset-prompt-readonly';
 const PRESET_PROMPT_CODEMIRROR_MAXIMIZED_CLASS = 'bai-bai-toolkit-preset-prompt-maximized';
-const PRESET_DRAG_INTERACTIVE_SELECTOR = '.prompt_manager_prompt_controls, .prompt-manager-detach-action, .prompt-manager-inspect-action, .prompt-manager-edit-action, .prompt-manager-toggle-action, .bai-bai-preset-group-actions, .bai-bai-preset-group-toggle, a, button, input, select, textarea, [contenteditable="true"]';
+const PRESET_DRAG_INTERACTIVE_SELECTOR = '.prompt_manager_prompt_controls, .bai-bai-preset-prompt-actions-hint, .bai-bai-preset-prompt-actions, .bai-bai-preset-prompt-action-button, [data-preset-prompt-action], .prompt-manager-detach-action, .prompt-manager-inspect-action, .prompt-manager-edit-action, .prompt-manager-toggle-action, .bai-bai-preset-group-actions, .bai-bai-preset-group-toggle, a, button, input, select, textarea, [contenteditable="true"]';
 const BAIBAOKU_TOKENIZER_BULK_COUNT_URL = '/api/plugins/baibaoku/v1/tokenizers/bulk-count';
 const OPENAI_TOKENIZER_BULK_BRIDGE_KEY = '__baibaokuTokenizerBulkBridge';
 const OPENAI_TOKENIZER_BULK_CACHE_LIMIT = 5000;
@@ -489,6 +489,81 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
     white-space: nowrap;
 }
 
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_list_head,
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_prompt {
+    grid-template-columns: minmax(0, 1fr) max-content max-content !important;
+    column-gap: 6px !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_list_head .prompt_manager_prompt_tokens,
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_prompt .prompt_manager_prompt_tokens {
+    inline-size: max-content !important;
+    min-inline-size: 2.2em !important;
+    width: auto !important;
+    justify-self: end !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_prompt .prompt_manager_prompt_controls {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    flex-direction: row !important;
+    gap: 4px !important;
+    position: relative;
+    flex-wrap: nowrap !important;
+    white-space: nowrap !important;
+    min-inline-size: max-content !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-icon-button,
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-action-button {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex: 0 0 calc(var(--mainFontSize) * 1.65) !important;
+    inline-size: calc(var(--mainFontSize) * 1.65) !important;
+    block-size: calc(var(--mainFontSize) * 1.65) !important;
+    min-inline-size: calc(var(--mainFontSize) * 1.65) !important;
+    min-block-size: calc(var(--mainFontSize) * 1.65) !important;
+    box-sizing: border-box !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: calc(var(--mainFontSize) * 1) !important;
+    line-height: 1 !important;
+    cursor: pointer !important;
+    white-space: nowrap !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-actions-hint-hidden {
+    display: none !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-actions {
+    display: none !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    gap: 4px !important;
+    flex: 0 0 auto !important;
+    min-inline-size: max-content !important;
+    white-space: nowrap !important;
+    opacity: 0;
+    transition: opacity var(--animation-duration-2x, 160ms) ease-in-out;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-actions-visible {
+    display: inline-flex !important;
+    opacity: 1 !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-action-button.caution {
+    color: var(--SmartThemeEmColor) !important;
+}
+
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-body {
     display: grid;
     grid-template-rows: 1fr;
@@ -570,6 +645,25 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
 
 .${PRESET_DRAG_CLONE_CLASS} .drag-handle {
     cursor: grabbing !important;
+}
+
+.${PRESET_DRAG_CLONE_CLASS} .bai-bai-preset-prompt-actions,
+.bai-bai-preset-vue-sortable-ghost .bai-bai-preset-prompt-actions,
+.bai-bai-preset-vue-sortable-fallback .bai-bai-preset-prompt-actions,
+.bai-bai-preset-vue-sortable-drag .bai-bai-preset-prompt-actions {
+    display: none !important;
+    opacity: 0 !important;
+}
+
+.${PRESET_DRAG_CLONE_CLASS} .bai-bai-preset-prompt-actions-hint,
+.${PRESET_DRAG_CLONE_CLASS} .bai-bai-preset-prompt-actions-hint-hidden,
+.bai-bai-preset-vue-sortable-ghost .bai-bai-preset-prompt-actions-hint,
+.bai-bai-preset-vue-sortable-ghost .bai-bai-preset-prompt-actions-hint-hidden,
+.bai-bai-preset-vue-sortable-fallback .bai-bai-preset-prompt-actions-hint,
+.bai-bai-preset-vue-sortable-fallback .bai-bai-preset-prompt-actions-hint-hidden,
+.bai-bai-preset-vue-sortable-drag .bai-bai-preset-prompt-actions-hint,
+.bai-bai-preset-vue-sortable-drag .bai-bai-preset-prompt-actions-hint-hidden {
+    display: inline-flex !important;
 }
 
 .${PRESET_DRAG_INDICATOR_CLASS} {
@@ -1499,6 +1593,9 @@ function renderPresetVuePromptDraggable(h, vueDraggableNext, model) {
         chosenClass: 'bai-bai-preset-vue-sortable-chosen',
         dragClass: 'bai-bai-preset-vue-sortable-drag',
         move: isPresetVuePromptTopLevelDragMoveAllowed,
+        onChoose: () => {
+            closePresetPromptActionMenus();
+        },
         key: `draggable-${model.renderKey}`,
         onStart: () => {
             const manager = getPresetVuePromptListManagerState();
@@ -1662,6 +1759,9 @@ function renderPresetVuePromptGroup(h, vueDraggableNext, item) {
         chosenClass: 'bai-bai-preset-vue-sortable-chosen',
         dragClass: 'bai-bai-preset-vue-sortable-drag',
         move: isPresetVuePromptGroupDragMoveAllowed,
+        onChoose: () => {
+            closePresetPromptActionMenus();
+        },
         onStart: () => {
             const manager = getPresetVuePromptListManagerState();
             const model = manager.state;
@@ -2113,6 +2213,10 @@ function setPresetVuePromptDragging(model, dragging) {
             getPromptManagerListElement()?.classList.remove(PRESET_DRAG_ACTIVE_CLASS);
         }
         return;
+    }
+
+    if (dragging) {
+        closePresetPromptActionMenus();
     }
 
     model.dragging = Boolean(dragging);
@@ -3253,28 +3357,111 @@ function renderPresetVuePromptControls(h, prompt, item) {
             ? false
             : !(promptManager.configuration.toggleDisabled ?? []).includes(prompt.identifier)
     );
+    const isEnabled = item.enabled !== false && item.orderEntry?.enabled !== false;
+
     return [
-        canDelete
-            ? h('span', {
-                title: 'Remove',
-                class: 'prompt-manager-detach-action caution fa-solid fa-chain-broken fa-xs',
-            })
-            : h('span', { class: 'fa-solid' }),
-        canEdit
-            ? h('span', {
-                title: 'edit',
-                class: 'prompt-manager-edit-action fa-solid fa-pencil fa-xs',
-            })
-            : h('span', { class: 'fa-solid' }),
+        h('span', {
+            title: t`更多操作`,
+            class: 'menu_button bai-bai-preset-prompt-icon-button bai-bai-preset-prompt-actions-hint fa-solid fa-ellipsis',
+            onClick: event => {
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation?.();
+                togglePresetPromptActionMenu(event.currentTarget);
+            },
+        }),
+        h('span', { class: 'bai-bai-preset-prompt-actions' }, [
+            canEdit
+                ? renderPresetVuePromptActionButton(h, {
+                    action: 'edit',
+                    icon: 'fa-pencil',
+                    text: t`编辑`,
+                    onClick: event => handlePresetPromptActionButtonClick(event),
+                })
+                : null,
+            renderPresetVuePromptActionButton(h, {
+                action: 'copy',
+                icon: 'fa-copy',
+                text: t`复制`,
+                onClick: event => handlePresetPromptActionButtonClick(event),
+            }),
+            canDelete
+                ? renderPresetVuePromptActionButton(h, {
+                    action: 'delete',
+                    icon: 'fa-trash',
+                    text: t`删除`,
+                    caution: true,
+                    onClick: event => handlePresetPromptActionButtonClick(event),
+                })
+                : null,
+        ].filter(Boolean)),
         canToggle
             ? h('span', {
+                title: isEnabled ? t`关闭条目` : t`开启条目`,
                 class: [
+                    'menu_button',
+                    'bai-bai-preset-prompt-icon-button',
                     'prompt-manager-toggle-action',
-                    item.enabled !== false && item.orderEntry?.enabled !== false ? 'fa-solid fa-toggle-on' : 'fa-solid fa-toggle-off',
+                    isEnabled ? 'fa-solid fa-toggle-on' : 'fa-solid fa-toggle-off',
                 ],
             })
-            : h('span', { class: 'fa-solid' }),
+            : null,
     ];
+}
+
+function renderPresetVuePromptActionButton(h, { action, icon, text, caution = false, onClick = null }) {
+    return h('span', {
+        class: [
+            'menu_button',
+            'bai-bai-preset-prompt-action-button',
+            'fa-solid',
+            icon,
+            caution ? 'caution' : '',
+        ],
+        title: text,
+        'data-preset-prompt-action': action,
+        onClick,
+    });
+}
+
+function renderPresetPromptControlsHtml({ canDelete, canEdit, canToggle, isEnabled }) {
+    const toggleSpanHtml = canToggle
+        ? `<span title="${escapeHtml(isEnabled ? t`关闭条目` : t`开启条目`)}" class="menu_button bai-bai-preset-prompt-icon-button prompt-manager-toggle-action fa-solid ${isEnabled ? 'fa-toggle-on' : 'fa-toggle-off'}"></span>`
+        : '';
+    const editItemHtml = canEdit
+        ? renderPresetPromptActionButtonHtml({
+            action: 'edit',
+            icon: 'fa-pencil',
+            text: t`编辑`,
+        })
+        : '';
+    const copyItemHtml = renderPresetPromptActionButtonHtml({
+        action: 'copy',
+        icon: 'fa-copy',
+        text: t`复制`,
+    });
+    const deleteItemHtml = canDelete
+        ? renderPresetPromptActionButtonHtml({
+            action: 'delete',
+            icon: 'fa-trash',
+            text: t`删除`,
+            caution: true,
+        })
+        : '';
+
+    return `
+        <span title="${escapeHtml(t`更多操作`)}" class="menu_button bai-bai-preset-prompt-icon-button bai-bai-preset-prompt-actions-hint fa-solid fa-ellipsis"></span>
+        <span class="bai-bai-preset-prompt-actions">
+            ${editItemHtml}
+            ${copyItemHtml}
+            ${deleteItemHtml}
+        </span>
+        ${toggleSpanHtml}
+    `;
+}
+
+function renderPresetPromptActionButtonHtml({ action, icon, text, caution = false }) {
+    return `<span title="${escapeHtml(text)}" data-preset-prompt-action="${escapeHtml(action)}" class="menu_button bai-bai-preset-prompt-action-button fa-solid ${icon}${caution ? ' caution' : ''}"></span>`;
 }
 
 function schedulePresetVuePromptOrderSaveAfterDrop() {
@@ -4874,13 +5061,32 @@ function escapeCssSelectorValue(value) {
 }
 
 function handlePresetListActionClick(event) {
-    if (!settings.presetSwitchOptimizationEnabled) {
+    if (!settings.presetSwitchOptimizationEnabled && !isPresetGroupingEnabled()) {
         return;
     }
 
     const target = event.target instanceof Element ? event.target : null;
 
-    if (!target?.closest(PRESET_PROMPT_MANAGER_LIST_SELECTOR)) {
+    if (!target) {
+        closePresetPromptActionMenus();
+        return;
+    }
+
+    const menuButton = target.closest(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-actions-hint`);
+
+    if (menuButton instanceof HTMLElement) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        togglePresetPromptActionMenu(menuButton);
+        return;
+    }
+
+    if (!target.closest(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-actions, ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-actions-hint`)) {
+        closePresetPromptActionMenus();
+    }
+
+    if (!target.closest(PRESET_PROMPT_MANAGER_LIST_SELECTOR)) {
         return;
     }
 
@@ -4888,15 +5094,36 @@ function handlePresetListActionClick(event) {
         return;
     }
 
-    const action = target.closest('.prompt-manager-detach-action, .prompt-manager-inspect-action, .prompt-manager-edit-action');
+    const action = target.closest('[data-preset-prompt-action], .prompt-manager-detach-action, .prompt-manager-inspect-action, .prompt-manager-edit-action');
 
     if (!action) {
         return;
     }
 
-    const handler = action.classList.contains('prompt-manager-detach-action')
+    handlePresetPromptActionButtonClick(event, action);
+}
+
+function handlePresetPromptActionButtonClick(event, action = null) {
+    action ||= event?.currentTarget instanceof Element ? event.currentTarget : null;
+
+    if (!(action instanceof Element)) {
+        return;
+    }
+
+    const presetAction = action.getAttribute('data-preset-prompt-action');
+
+    if (presetAction === 'copy') {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        event.stopImmediatePropagation?.();
+        closePresetPromptActionMenus();
+        void copyPresetPromptEntryFromAction(action);
+        return;
+    }
+
+    const handler = presetAction === 'delete' || action.classList.contains('prompt-manager-detach-action')
         ? promptManager?.handleDetach
-        : action.classList.contains('prompt-manager-inspect-action')
+        : presetAction === 'inspect' || action.classList.contains('prompt-manager-inspect-action')
             ? promptManager?.handleInspect
             : promptManager?.handleEdit;
 
@@ -4904,9 +5131,10 @@ function handlePresetListActionClick(event) {
         return;
     }
 
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    event.stopImmediatePropagation?.();
+    closePresetPromptActionMenus();
 
     try {
         handler.call(promptManager, event);
@@ -4914,6 +5142,181 @@ function handlePresetListActionClick(event) {
     } catch (error) {
         console.debug(`${LOG_PREFIX} Failed to handle prompt manager list action`, error);
     }
+}
+
+function togglePresetPromptActionMenu(button) {
+    const wrapper = button.closest('.prompt_manager_prompt_controls');
+
+    if (!(wrapper instanceof HTMLElement)) {
+        return;
+    }
+
+    const actions = wrapper.querySelector('.bai-bai-preset-prompt-actions');
+
+    if (!(actions instanceof HTMLElement)) {
+        return;
+    }
+
+    const wasOpen = actions.classList.contains('bai-bai-preset-prompt-actions-visible');
+    closePresetPromptActionMenus({ except: wrapper });
+    actions.classList.toggle('bai-bai-preset-prompt-actions-visible', !wasOpen);
+    wrapper.querySelector('.bai-bai-preset-prompt-actions-hint')?.classList.toggle('bai-bai-preset-prompt-actions-hint-hidden', !wasOpen);
+}
+
+function closePresetPromptActionMenus({ except = null } = {}) {
+    document.querySelectorAll(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-actions-visible`).forEach(actions => {
+        const wrapper = actions.closest('.prompt_manager_prompt_controls');
+
+        if (wrapper === except) {
+            return;
+        }
+
+        actions.classList.remove('bai-bai-preset-prompt-actions-visible');
+        wrapper?.querySelector('.bai-bai-preset-prompt-actions-hint')?.classList.remove('bai-bai-preset-prompt-actions-hint-hidden');
+    });
+}
+
+async function copyPresetPromptEntryFromAction(action) {
+    const row = action.closest(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_prompt[data-pm-identifier]`);
+    const promptId = row?.dataset?.pmIdentifier;
+
+    if (!promptId) {
+        return;
+    }
+
+    await copyPresetPromptEntry(promptId);
+}
+
+async function copyPresetPromptEntry(promptId) {
+    if (!promptManager?.activeCharacter || !Array.isArray(promptManager.serviceSettings?.prompts)) {
+        toastr.warning(t`当前无法复制这个预设条目。`);
+        return false;
+    }
+
+    const sourcePrompt = promptManager.getPromptById?.(promptId);
+    const promptOrder = promptManager.getPromptOrderForCharacter?.(promptManager.activeCharacter);
+
+    if (!sourcePrompt || !Array.isArray(promptOrder)) {
+        toastr.warning(t`没有找到要复制的预设条目。`);
+        return false;
+    }
+
+    const sourceOrderIndex = promptOrder.findIndex(entry => entry?.identifier === promptId);
+
+    if (sourceOrderIndex < 0) {
+        toastr.warning(t`这个预设条目不在当前列表中。`);
+        return false;
+    }
+
+    const copyId = createUniquePresetPromptIdentifier();
+    const sourcePromptIndex = promptManager.serviceSettings.prompts.findIndex(prompt => prompt?.identifier === promptId);
+    const promptCopy = structuredClone(sourcePrompt);
+    const sourceOrderEntry = promptOrder[sourceOrderIndex] ?? {};
+    const orderCopy = {
+        ...structuredClone(sourceOrderEntry),
+        identifier: copyId,
+        enabled: sourceOrderEntry.enabled !== false,
+    };
+
+    promptCopy.identifier = copyId;
+    promptCopy.name = createPresetPromptCopyName(sourcePrompt.name);
+
+    if (sourcePromptIndex >= 0) {
+        promptManager.serviceSettings.prompts.splice(sourcePromptIndex + 1, 0, promptCopy);
+    } else {
+        promptManager.serviceSettings.prompts.push(promptCopy);
+    }
+
+    promptOrder.splice(sourceOrderIndex + 1, 0, orderCopy);
+    copyPresetPromptGroupAssignment(promptId, copyId);
+
+    const counts = promptManager.tokenHandler?.getCounts?.();
+
+    if (counts) {
+        counts[copyId] = null;
+    }
+
+    promptManager.log?.(`Copied prompt: ${promptId} -> ${copyId}.`);
+    refreshPresetPromptListAfterCopy();
+
+    try {
+        await Promise.resolve(promptManager.saveServiceSettings?.());
+        saveOpenAiPresetAfterPromptEdit();
+        toastr.success(t`已复制预设条目。`);
+        refreshPromptManagerTokensDebounced();
+        return true;
+    } catch (error) {
+        console.debug(`${LOG_PREFIX} Failed to save copied preset prompt`, error);
+        toastr.error(t`复制预设条目后保存失败。`);
+        return false;
+    }
+}
+
+function createUniquePresetPromptIdentifier() {
+    let identifier = uuidv4();
+
+    while (promptManager?.getPromptById?.(identifier)) {
+        identifier = uuidv4();
+    }
+
+    return identifier;
+}
+
+function createPresetPromptCopyName(name) {
+    const sourceName = String(name || t`未命名条目`);
+    const baseName = `${sourceName} 副本`;
+    const existingNames = new Set(
+        (promptManager?.serviceSettings?.prompts ?? [])
+            .map(prompt => prompt?.name)
+            .filter(name => typeof name === 'string'),
+    );
+
+    if (!existingNames.has(baseName)) {
+        return baseName;
+    }
+
+    for (let index = 2; index < 1000; index++) {
+        const candidate = `${baseName} ${index}`;
+
+        if (!existingNames.has(candidate)) {
+            return candidate;
+        }
+    }
+
+    return `${baseName} ${Date.now()}`;
+}
+
+function copyPresetPromptGroupAssignment(sourcePromptId, copiedPromptId) {
+    if (!isPresetGroupingEnabled()) {
+        return false;
+    }
+
+    const groupState = getPresetPromptGroupState();
+    const groupId = groupState.prompts?.[sourcePromptId]?.groupId;
+
+    if (!groupId) {
+        return false;
+    }
+
+    groupState.prompts[copiedPromptId] = { groupId };
+    normalizePresetPromptGroupState(groupState, new Set(getCurrentPresetPromptOrderIds()));
+    savePresetPromptGroupSettings();
+    return true;
+}
+
+function refreshPresetPromptListAfterCopy() {
+    if (isPresetVuePromptListManagerActive()) {
+        syncPresetVuePromptListManagerState();
+        preparePromptManagerCustomDragList(getPromptManagerListElement());
+        return;
+    }
+
+    if (settings.presetSwitchOptimizationEnabled && isPromptManagerReadyForFastPresetSwitch()) {
+        void renderPromptManagerListWithoutTokenStats();
+        return;
+    }
+
+    promptManager?.render?.();
 }
 
 async function handleOpenAiPresetChangedBefore(event) {
@@ -5070,15 +5473,12 @@ async function renderPromptManagerListItemsFast() {
         const canToggle = prompt.marker && !FORCE_TOGGLE_PROMPTS.has(prompt.identifier)
             ? false
             : !toggleDisabled.has(prompt.identifier);
-        const detachSpanHtml = canDelete
-            ? '<span title="Remove" class="prompt-manager-detach-action caution fa-solid fa-chain-broken fa-xs"></span>'
-            : '<span class="fa-solid"></span>';
-        const editSpanHtml = canEdit
-            ? '<span title="edit" class="prompt-manager-edit-action fa-solid fa-pencil fa-xs"></span>'
-            : '<span class="fa-solid"></span>';
-        const toggleSpanHtml = canToggle
-            ? `<span class="prompt-manager-toggle-action ${listEntry?.enabled ? 'fa-solid fa-toggle-on' : 'fa-solid fa-toggle-off'}"></span>`
-            : '<span class="fa-solid"></span>';
+        const controlsHtml = renderPresetPromptControlsHtml({
+            canDelete,
+            canEdit,
+            canToggle,
+            isEnabled: listEntry?.enabled !== false,
+        });
 
         listItemHtml += renderPromptManagerListRow({
             prefix,
@@ -5087,9 +5487,7 @@ async function renderPromptManagerListItemsFast() {
             draggableClass,
             markerClass,
             importantClass: getPromptImportantClass(prompt, prefix),
-            detachSpanHtml,
-            editSpanHtml,
-            toggleSpanHtml,
+            controlsHtml,
             warningClass,
             warningTitle,
             calculatedTokens,
@@ -5107,9 +5505,7 @@ function renderPromptManagerListRow({
     draggableClass,
     markerClass,
     importantClass,
-    detachSpanHtml,
-    editSpanHtml,
-    toggleSpanHtml,
+    controlsHtml,
     warningClass,
     warningTitle,
     calculatedTokens,
@@ -5146,9 +5542,7 @@ function renderPromptManagerListRow({
             </span>
             <span>
                 <span class="prompt_manager_prompt_controls">
-                    ${detachSpanHtml}
-                    ${editSpanHtml}
-                    ${toggleSpanHtml}
+                    ${controlsHtml}
                 </span>
             </span>
             <span class="prompt_manager_prompt_tokens" data-pm-tokens="${calculatedTokens}"><span class="${warningClass}" title="${warningTitle}"> </span>${calculatedTokens}</span>
@@ -6215,7 +6609,7 @@ function installPresetPromptCodeMirrorEditorGlobalListeners(state) {
         if (
             target.closest(PRESET_PROMPT_MANAGER_RESET_SELECTOR)
             || target.closest(PRESET_PROMPT_MANAGER_CLOSE_SELECTOR)
-            || target.closest(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .prompt-manager-edit-action, ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .prompt-manager-inspect-action, ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .prompt-manager-detach-action`)
+            || target.closest(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR} [data-preset-prompt-action], ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .prompt-manager-edit-action, ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .prompt-manager-inspect-action, ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .prompt-manager-detach-action`)
             || target.closest('#completion_prompt_manager .completion_prompt_manager_footer .menu_button')
         ) {
             schedulePresetPromptCodeMirrorEditorRefresh(state, { forceFromSource: true });
