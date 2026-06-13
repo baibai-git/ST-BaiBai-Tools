@@ -32,6 +32,7 @@ const PRESET_VUE_LIST_MANAGER_KEY = '__baiBaiToolkitPresetVueListManager';
 const PRESET_VUE_LIST_RENDER_PATCH_KEY = '__baiBaiToolkitPresetVueListRenderPatch';
 const PRESET_VUE_TOUCH_SCROLL_GUARD_KEY = '__baiBaiToolkitPresetVueTouchScrollGuard';
 const PRESET_VUE_DRAG_PLACEMENT_LISTENER_KEY = '__baiBaiToolkitPresetVueDragPlacementListener';
+const PRESET_VUE_GROUP_HEADER_CUSTOM_DRAG_LISTENER_KEY = '__baiBaiToolkitPresetVueGroupHeaderCustomDragListener';
 const PRESET_VUE_DYNAMIC_DRAG_DELAY_HANDLER_KEY = '__baiBaiToolkitPresetVueDynamicDragDelayHandler';
 const PRESET_PENDING_CHANGES_LIFECYCLE_HANDLER_KEY = '__baiBaiToolkitPresetPendingChangesLifecycleHandler';
 const PRESET_VUE_LIST_HOST_CLASS = 'bai-bai-preset-vue-list-host';
@@ -518,7 +519,7 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
 
 @media (pointer: coarse) {
     #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-drag-surface {
-        touch-action: none !important;
+        touch-action: pan-y !important;
     }
 }
 
@@ -1314,8 +1315,10 @@ function unmountPresetVuePromptListApp(manager = getPresetVuePromptListManagerSt
     manager.currentTopLevelDropIndex = null;
     manager.currentDropTargetGroupId = null;
     manager.draggedPromptId = null;
+    cancelPresetVuePromptGroupHeaderCustomDrag(manager, { suppress: false });
     clearPresetVuePromptDragReadyFeedback(manager);
     manager.groupHeaderGesture = null;
+    manager.groupHeaderCustomDrag = null;
     manager.lastGroupHeaderToggleAt = 0;
     manager.lastGroupHeaderGestureCanceledAt = 0;
     manager.lastDragStartedAt = 0;
@@ -1364,6 +1367,7 @@ function getPresetVuePromptListManagerState() {
             dragAutoScrollFrame: null,
             lastDragPoint: null,
             groupHeaderGesture: null,
+            groupHeaderCustomDrag: null,
             lastGroupHeaderToggleAt: 0,
             lastGroupHeaderGestureCanceledAt: 0,
             lastDragStartedAt: 0,
@@ -2099,14 +2103,22 @@ function getPresetVuePromptIdFromDragEvent(event) {
 }
 
 function beginPresetVuePromptManualDrag(model, event) {
+    return beginPresetVuePromptManualDragWithItem(model, getPresetVuePromptDragItemFromEvent(event), event?.originalEvent ?? event);
+}
+
+function beginPresetVuePromptManualDragWithItem(model, draggedItem, event) {
     const manager = getPresetVuePromptListManagerState();
     const list = getPromptManagerListElement();
+
+    if (!model || !draggedItem) {
+        return false;
+    }
 
     manager.groupHeaderGesture = null;
     manager.currentTopLevelDropIndex = null;
     manager.currentDropTargetGroupId = null;
     manager.currentDropTargetElement = null;
-    manager.draggedItem = getPresetVuePromptDragItemFromEvent(event);
+    manager.draggedItem = draggedItem;
     manager.draggedPromptId = manager.draggedItem?.type === 'prompt' ? manager.draggedItem.id : null;
     manager.dragLayoutCache = createPresetVuePromptManualDragLayoutCache(model, manager.draggedItem);
     manager.dragScrollContainer = list instanceof HTMLElement
@@ -2118,7 +2130,8 @@ function beginPresetVuePromptManualDrag(model, event) {
     notifyPresetVuePromptDragStarted();
     capturePresetVuePromptDragSnapshot(model);
     startPresetVuePromptManualDragPlacementListeners(manager);
-    updatePresetVuePromptManualDragPlacementFromEvent(event?.originalEvent ?? event);
+    updatePresetVuePromptManualDragPlacementFromEvent(event);
+    return true;
 }
 
 function finishPresetVuePromptManualDrag(model, event = null) {
@@ -3169,26 +3182,34 @@ function beginPresetVuePromptGroupHeaderGesture(event, groupId) {
 
     const manager = getPresetVuePromptListManagerState();
     const feedbackElement = getPresetVuePromptGroupHeaderFeedbackElement(event.currentTarget);
+    const startedAt = Date.now();
 
+    cancelPresetVuePromptGroupHeaderCustomDrag(manager, { suppress: false });
     clearPresetVuePromptDragReadyFeedback(manager);
-    schedulePresetVuePromptDragReadyFeedback(manager, feedbackElement);
     manager.groupHeaderGesture = {
         groupId,
         pointerId: event.pointerId,
-        startedAt: Date.now(),
+        startedAt,
         x: point.clientX,
         y: point.clientY,
+        lastX: point.clientX,
         lastY: point.clientY,
         scrolling: false,
-        scrollTargets: getPresetVuePromptGroupHeaderScrollTargets(event.currentTarget),
+        dragging: false,
+        feedbackElement,
+        readyTimer: null,
     };
+
+    if (isMobile() && feedbackElement instanceof HTMLElement) {
+        manager.dragReadyFeedbackElement = feedbackElement;
+        manager.dragReadyFeedbackNotified = false;
+        manager.groupHeaderGesture.readyTimer = window.setTimeout(() => {
+            beginPresetVuePromptGroupHeaderCustomDrag(manager, manager.groupHeaderGesture);
+        }, PRESET_VUE_TOUCH_DRAG_DELAY_MS);
+    }
 }
 
 function movePresetVuePromptGroupHeaderGesture(event, groupId) {
-    if (!isMobile()) {
-        return;
-    }
-
     const manager = getPresetVuePromptListManagerState();
     const gesture = manager.groupHeaderGesture;
 
@@ -3202,40 +3223,54 @@ function movePresetVuePromptGroupHeaderGesture(event, groupId) {
         return;
     }
 
+    gesture.lastX = point.clientX;
+    gesture.lastY = point.clientY;
+
     const deltaX = point.clientX - gesture.x;
     const deltaY = point.clientY - gesture.y;
     const absX = Math.abs(deltaX);
     const absY = Math.abs(deltaY);
-    const beforeLongPress = Date.now() - gesture.startedAt < PRESET_VUE_TOUCH_DRAG_DELAY_MS;
 
-    if (!gesture.scrolling) {
-        if (!beforeLongPress || absY <= PRESET_VUE_TOUCH_START_THRESHOLD_PX || absY < absX) {
-            return;
+    if (gesture.dragging) {
+        updatePresetVuePromptManualDragPlacementFromEvent(event);
+
+        if (event.cancelable) {
+            event.preventDefault();
         }
 
-        gesture.scrolling = true;
-        manager.lastGroupHeaderGestureCanceledAt = Date.now();
-        clearPresetVuePromptDragReadyFeedback(manager);
+        event.stopPropagation();
+        return;
     }
 
-    scrollPresetVuePromptGroupHeaderGesture(gesture, point);
-
-    if (event.cancelable) {
-        event.preventDefault();
+    if (!isMobile()) {
+        return;
     }
 
-    event.stopPropagation();
+    if (Math.max(absX, absY) <= PRESET_VUE_TOUCH_START_THRESHOLD_PX) {
+        return;
+    }
+
+    gesture.scrolling = true;
+    manager.lastGroupHeaderGestureCanceledAt = Date.now();
+    clearPresetVuePromptGroupHeaderGestureTimer(gesture);
+    clearPresetVuePromptDragReadyFeedback(manager);
 }
 
 function finishPresetVuePromptGroupHeaderGesture(event, groupId) {
     const manager = getPresetVuePromptListManagerState();
     const gesture = manager.groupHeaderGesture;
 
+    if (manager.groupHeaderCustomDrag?.pointerId === event.pointerId) {
+        finishPresetVuePromptGroupHeaderCustomDrag(event);
+        return;
+    }
+
     if (!gesture || gesture.groupId !== groupId || gesture.pointerId !== event.pointerId) {
         return;
     }
 
     manager.groupHeaderGesture = null;
+    clearPresetVuePromptGroupHeaderGestureTimer(gesture);
     clearPresetVuePromptDragReadyFeedback(manager);
 
     if (isPresetVuePromptGroupHeaderInteractiveEvent(event) || shouldSuppressPresetVuePromptGroupHeaderToggle(manager)) {
@@ -3261,7 +3296,12 @@ function finishPresetVuePromptGroupHeaderGesture(event, groupId) {
 function cancelPresetVuePromptGroupHeaderGesture(groupId) {
     const manager = getPresetVuePromptListManagerState();
 
+    if (manager.groupHeaderCustomDrag?.groupId === groupId) {
+        cancelPresetVuePromptGroupHeaderCustomDrag(manager);
+    }
+
     if (manager.groupHeaderGesture?.groupId === groupId) {
+        clearPresetVuePromptGroupHeaderGestureTimer(manager.groupHeaderGesture);
         manager.groupHeaderGesture = null;
         manager.lastGroupHeaderGestureCanceledAt = Date.now();
         clearPresetVuePromptDragReadyFeedback(manager);
@@ -3329,20 +3369,160 @@ function getPresetVuePromptGroupHeaderFeedbackElement(source) {
     return source.closest(`li.${PRESET_VUE_TOP_LEVEL_DRAGGABLE_CLASS}`);
 }
 
-function schedulePresetVuePromptDragReadyFeedback(manager, element) {
-    if (!isMobile() || !(element instanceof HTMLElement)) {
-        return;
+function clearPresetVuePromptGroupHeaderGestureTimer(gesture) {
+    if (gesture?.readyTimer) {
+        clearTimeout(gesture.readyTimer);
+        gesture.readyTimer = null;
+    }
+}
+
+function beginPresetVuePromptGroupHeaderCustomDrag(manager, gesture) {
+    if (!isMobile() || !manager || manager.groupHeaderGesture !== gesture || !gesture || gesture.scrolling || gesture.dragging) {
+        return false;
     }
 
-    manager.dragReadyFeedbackElement = element;
-    manager.dragReadyFeedbackTimer = window.setTimeout(() => {
-        if (manager.groupHeaderGesture?.scrolling) {
-            clearPresetVuePromptDragReadyFeedback(manager);
+    const model = manager.state;
+    const point = {
+        clientX: gesture.lastX ?? gesture.x,
+        clientY: gesture.lastY ?? gesture.y,
+    };
+
+    clearPresetVuePromptGroupHeaderGestureTimer(gesture);
+    gesture.dragging = true;
+    manager.groupHeaderCustomDrag = {
+        groupId: gesture.groupId,
+        pointerId: gesture.pointerId,
+    };
+
+    const started = beginPresetVuePromptManualDragWithItem(
+        model,
+        { type: 'group', id: gesture.groupId },
+        point,
+    );
+
+    if (!started) {
+        cancelPresetVuePromptGroupHeaderCustomDrag(manager);
+        return false;
+    }
+
+    startPresetVuePromptGroupHeaderCustomDragEndListeners(manager);
+    return true;
+}
+
+function startPresetVuePromptGroupHeaderCustomDragEndListeners(manager = getPresetVuePromptListManagerState()) {
+    stopPresetVuePromptGroupHeaderCustomDragEndListeners();
+
+    const pointerup = event => {
+        const customDrag = manager.groupHeaderCustomDrag;
+
+        if (!customDrag || customDrag.pointerId !== event.pointerId) {
             return;
         }
 
-        showPresetVuePromptDragReadyFeedback(manager);
-    }, PRESET_VUE_TOUCH_DRAG_DELAY_MS);
+        finishPresetVuePromptGroupHeaderCustomDrag(event);
+    };
+    const pointercancel = event => {
+        const customDrag = manager.groupHeaderCustomDrag;
+
+        if (!customDrag || customDrag.pointerId !== event.pointerId) {
+            return;
+        }
+
+        cancelPresetVuePromptGroupHeaderCustomDrag(manager);
+    };
+    const touchend = event => {
+        if (manager.groupHeaderCustomDrag) {
+            finishPresetVuePromptGroupHeaderCustomDrag(event);
+        }
+    };
+    const touchcancel = () => {
+        if (manager.groupHeaderCustomDrag) {
+            cancelPresetVuePromptGroupHeaderCustomDrag(manager);
+        }
+    };
+
+    document.addEventListener('pointerup', pointerup, true);
+    document.addEventListener('pointercancel', pointercancel, true);
+    document.addEventListener('touchend', touchend, true);
+    document.addEventListener('touchcancel', touchcancel, true);
+    extensionState[PRESET_VUE_GROUP_HEADER_CUSTOM_DRAG_LISTENER_KEY] = {
+        pointerup,
+        pointercancel,
+        touchend,
+        touchcancel,
+    };
+}
+
+function stopPresetVuePromptGroupHeaderCustomDragEndListeners() {
+    const listeners = extensionState[PRESET_VUE_GROUP_HEADER_CUSTOM_DRAG_LISTENER_KEY];
+
+    if (!listeners) {
+        return;
+    }
+
+    document.removeEventListener('pointerup', listeners.pointerup, true);
+    document.removeEventListener('pointercancel', listeners.pointercancel, true);
+    document.removeEventListener('touchend', listeners.touchend, true);
+    document.removeEventListener('touchcancel', listeners.touchcancel, true);
+    delete extensionState[PRESET_VUE_GROUP_HEADER_CUSTOM_DRAG_LISTENER_KEY];
+}
+
+function finishPresetVuePromptGroupHeaderCustomDrag(event = null) {
+    const manager = getPresetVuePromptListManagerState();
+    const model = manager.state;
+
+    if (!manager.groupHeaderCustomDrag) {
+        return;
+    }
+
+    stopPresetVuePromptGroupHeaderCustomDragEndListeners();
+
+    if (event?.cancelable) {
+        event.preventDefault();
+    }
+
+    event?.stopPropagation?.();
+
+    manager.lastDragEndedAt = Date.now();
+    const manualDrop = finishPresetVuePromptManualDrag(model, event);
+    setPresetVuePromptDragging(model, false);
+    manager.draggedPromptId = null;
+    manager.draggedItem = null;
+    manager.currentDropTargetGroupId = null;
+    manager.currentTopLevelDropIndex = null;
+    manager.groupHeaderCustomDrag = null;
+    manager.groupHeaderGesture = null;
+    manager.lastGroupHeaderGestureCanceledAt = Date.now();
+
+    const modelChanged = consumePresetVuePromptDragChange(model);
+
+    if (manualDrop || modelChanged) {
+        schedulePresetVuePromptOrderSaveAfterDrop();
+    }
+}
+
+function cancelPresetVuePromptGroupHeaderCustomDrag(
+    manager = getPresetVuePromptListManagerState(),
+    { suppress = true } = {},
+) {
+    stopPresetVuePromptGroupHeaderCustomDragEndListeners();
+
+    if (manager.groupHeaderGesture) {
+        clearPresetVuePromptGroupHeaderGestureTimer(manager.groupHeaderGesture);
+    }
+
+    if (manager.groupHeaderCustomDrag) {
+        manager.dragSnapshot = null;
+        setPresetVuePromptDragging(manager.state, false);
+    }
+
+    clearPresetVuePromptDragReadyFeedback(manager);
+    manager.groupHeaderCustomDrag = null;
+    manager.groupHeaderGesture = null;
+
+    if (suppress) {
+        manager.lastGroupHeaderGestureCanceledAt = Date.now();
+    }
 }
 
 function showPresetVuePromptDragReadyFeedback(manager, { notify = true } = {}) {
@@ -3373,50 +3553,6 @@ function clearPresetVuePromptDragReadyFeedback(manager = getPresetVuePromptListM
 
     manager.dragReadyFeedbackElement = null;
     manager.dragReadyFeedbackNotified = false;
-}
-
-function getPresetVuePromptGroupHeaderScrollTargets(source) {
-    const targets = [];
-    let current = source instanceof Element ? source.parentElement : null;
-
-    while (current && current !== document.body && current !== document.documentElement) {
-        const style = getComputedStyle(current);
-        const canScrollY = /(auto|scroll|overlay)/.test(style.overflowY);
-
-        if (canScrollY && current.scrollHeight > current.clientHeight) {
-            targets.push(current);
-        }
-
-        current = current.parentElement;
-    }
-
-    targets.push(document.scrollingElement || document.documentElement);
-    return targets;
-}
-
-function scrollPresetVuePromptGroupHeaderGesture(gesture, point) {
-    const deltaY = gesture.lastY - point.clientY;
-    gesture.lastY = point.clientY;
-
-    if (!deltaY) {
-        return;
-    }
-
-    let remaining = deltaY;
-
-    for (const target of gesture.scrollTargets ?? []) {
-        if (!(target instanceof Element)) {
-            continue;
-        }
-
-        const before = target.scrollTop;
-        target.scrollTop += remaining;
-        remaining -= target.scrollTop - before;
-
-        if (Math.abs(remaining) < 0.5) {
-            return;
-        }
-    }
 }
 
 function renderPresetVuePromptGroupBody(h, vueDraggableNext, item, draggableProps) {
@@ -3541,9 +3677,13 @@ function vibratePresetVuePromptDragFeedback() {
 }
 
 function getPresetVuePromptDragHandleSelector() {
-    return isMobile() && !settings.presetMobileWholeRowDragEnabled
-        ? '.drag-handle, .bai-bai-preset-group-drag-surface'
-        : '';
+    if (!isMobile()) {
+        return '';
+    }
+
+    return settings.presetMobileWholeRowDragEnabled
+        ? 'li.completion_prompt_manager_prompt_draggable'
+        : '.drag-handle';
 }
 
 function setPresetVuePromptDragging(model, dragging) {
