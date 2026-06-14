@@ -43,11 +43,6 @@ const LONG_CHAT_DOM_RENDER_LATEST_MESSAGE_TOP_OFFSET_MAX = 160;
 const LONG_CHAT_DOM_RENDER_WIDTH_BUCKET_SIZE = 80;
 const LONG_CHAT_DOM_RENDER_DEBUG_LOG_INTERVAL_MS = 500;
 const LONG_CHAT_DOM_RENDER_DEBUG_LOG_SLOW_MS = 16;
-const LONG_CHAT_DOM_RENDER_ESTIMATE_SAFETY_MULTIPLIER = 1.25;
-const LONG_CHAT_DOM_RENDER_ESTIMATE_EXTRA_PX = 80;
-const LONG_CHAT_DOM_RENDER_ESTIMATE_MAX_HEIGHT = 80000;
-const LONG_CHAT_DOM_RENDER_ESTIMATOR_ALPHA = 0.35;
-const LONG_CHAT_DOM_RENDER_ESTIMATOR_MAX_SCALE = 4;
 const LONG_CHAT_DOM_RENDER_BOTTOM_ANCHOR_CLASS = 'bai-bai-toolkit-long-chat-bottom-anchor';
 const LONG_CHAT_DOM_RENDER_BOTTOM_ANCHORED_CLASS = 'bai-bai-toolkit-long-chat-bottom-anchored';
 const LONG_CHAT_DOM_RENDER_HEIGHT_VAR = '--bai-bai-toolkit-long-chat-mes-height';
@@ -344,9 +339,6 @@ function getLongChatDomRenderState() {
     }
     if (!(state.tailMessageIds instanceof Set)) {
         state.tailMessageIds = new Set();
-    }
-    if (!(state.roleHeightEstimators instanceof Map)) {
-        state.roleHeightEstimators = new Map();
     }
     if (!Array.isArray(state.eventHandlers)) {
         state.eventHandlers = [];
@@ -658,7 +650,6 @@ function refreshLongChatDomRenderOptimization({ reason = '', mode = 'full', mess
             unobserveLongChatDomRenderMessage(element, record, state);
         }
     }
-    updateLongChatDomRenderRoleHeightEstimators(state, uncontainedTailMessages, chat, chatWidth);
 
     if (shouldOptimize && isLongChatDomRenderGenerationActive()) {
         scheduleLongChatDomRenderGenerationAnchor(reason || 'refresh');
@@ -743,7 +734,6 @@ function refreshLongChatDomRenderIncremental({ state, chatElement, chat, reason 
             unobserveLongChatDomRenderMessage(record.element, record, state);
         }
     }
-    updateLongChatDomRenderRoleHeightEstimatorsForIds(state, chatElement, nextTailMessageIds, chat, chatWidth);
 
     state.tailMessageIds = nextTailMessageIds;
 
@@ -775,100 +765,6 @@ function logLongChatDomRenderRefresh(stats, mode = 'full') {
     console.info(`${LOG_PREFIX} longdom mode=${mode} reason=${stats?.reason || 'refresh'} duration=${duration.toFixed(1)}ms messages=${stats?.messages || 0} optimized=${stats?.optimized ? 'yes' : 'no'} contained=${stats?.contained || 0} tail=${stats?.tail || 0} cached=${stats?.cached || 0} estimated=${stats?.estimated || 0} measured=${stats?.measured || 0} skipped=${stats?.skipped || 0}`);
 }
 
-function updateLongChatDomRenderRoleHeightEstimatorsForIds(state, chatElement, messageIds, chat, width) {
-    const elements = [];
-
-    for (const mesId of messageIds || []) {
-        const record = state.messageRecords?.get?.(String(mesId));
-        const element = record?.element instanceof HTMLElement
-            ? record.element
-            : getLongChatDomRenderMessageElement(chatElement, mesId);
-
-        if (element instanceof HTMLElement) {
-            elements.push(element);
-        }
-    }
-
-    updateLongChatDomRenderRoleHeightEstimators(state, elements, chat, width);
-}
-
-function updateLongChatDomRenderRoleHeightEstimators(state, elements, chat, width = window.innerWidth) {
-    if (!state || !Array.isArray(chat)) {
-        return;
-    }
-
-    for (const element of elements || []) {
-        if (!(element instanceof HTMLElement)
-            || !element.isConnected
-            || element.classList.contains('bai-bai-toolkit-long-chat-contained')) {
-            continue;
-        }
-
-        const mesId = element.getAttribute('mesid') || '';
-        const index = Number(mesId);
-        if (!mesId || !Number.isInteger(index)) {
-            continue;
-        }
-
-        const message = chat[index] || null;
-        const actualHeight = measureLongChatDomRenderMessageHeight(element);
-        if (actualHeight < 24) {
-            continue;
-        }
-
-        const textInfo = getLongChatDomRenderMessageTextInfo(message);
-        const role = getLongChatDomRenderMessageRole(message);
-        const fallbackHeight = estimateLongChatDomRenderFallbackMessageHeight(textInfo.chars, width, role);
-        if (!Number.isFinite(fallbackHeight) || fallbackHeight <= 0) {
-            continue;
-        }
-
-        const rawScale = actualHeight / fallbackHeight;
-        const safeScale = Math.max(1, Math.min(LONG_CHAT_DOM_RENDER_ESTIMATOR_MAX_SCALE, rawScale));
-        const key = getLongChatDomRenderRoleHeightEstimatorKey(role, width);
-        const previous = state.roleHeightEstimators.get(key);
-        const previousScale = Number(previous?.scale || 1);
-        const scale = previous
-            ? previousScale + (Math.max(0, safeScale - previousScale) * LONG_CHAT_DOM_RENDER_ESTIMATOR_ALPHA)
-            : safeScale;
-
-        state.roleHeightEstimators.set(key, {
-            role,
-            widthBucket: getLongChatDomRenderWidthBucket(width),
-            scale,
-            samples: Math.min(1000, Number(previous?.samples || 0) + 1),
-            updatedAt: Date.now(),
-        });
-
-        const record = state.messageRecords?.get?.(mesId);
-        if (record) {
-            record.role = role;
-            record.textChars = textInfo.chars;
-            record.messageSignature = textInfo.signature;
-            record.sampleHeight = actualHeight;
-        }
-
-        setLongChatDomRenderCachedHeight(mesId, actualHeight);
-    }
-}
-
-function getLongChatDomRenderRoleHeightEstimatorKey(role, width = window.innerWidth) {
-    return `${getLongChatDomRenderNormalizedRole(role)}:${getLongChatDomRenderWidthBucket(width)}`;
-}
-
-function getLongChatDomRenderRoleHeightEstimator(role, width = window.innerWidth) {
-    const state = getLongChatDomRenderState();
-    return state.roleHeightEstimators?.get?.(getLongChatDomRenderRoleHeightEstimatorKey(role, width)) || null;
-}
-
-function getLongChatDomRenderWidthBucket(width = window.innerWidth) {
-    return Math.max(0, Math.round(Number(width || 0) / LONG_CHAT_DOM_RENDER_WIDTH_BUCKET_SIZE));
-}
-
-function getLongChatDomRenderNormalizedRole(role) {
-    return role === 'user' ? 'user' : 'assistant';
-}
-
 function rebuildLongChatDomRenderIndex(state, chatElement, messages, chat) {
     const previousRecords = state.messageRecords instanceof Map ? state.messageRecords : new Map();
     const nextRecords = new Map();
@@ -888,7 +784,6 @@ function rebuildLongChatDomRenderIndex(state, chatElement, messages, chat) {
         const index = Number(mesId);
         const message = Number.isInteger(index) ? chat[index] : null;
         const textInfo = getLongChatDomRenderMessageTextInfo(message);
-        const role = getLongChatDomRenderMessageRole(message);
         const previous = previousRecords.get(mesId);
         const record = previous || { mesId };
 
@@ -900,7 +795,6 @@ function rebuildLongChatDomRenderIndex(state, chatElement, messages, chat) {
         record.element = element;
         record.textChars = textInfo.chars;
         record.messageSignature = textInfo.signature;
-        record.role = role;
         nextRecords.set(mesId, record);
 
         totalTextChars += textInfo.chars;
@@ -937,7 +831,6 @@ function syncLongChatDomRenderRecord(state, element, chat) {
 
     const message = chat[index] || null;
     const textInfo = getLongChatDomRenderMessageTextInfo(message);
-    const role = getLongChatDomRenderMessageRole(message);
     const records = state.messageRecords instanceof Map ? state.messageRecords : new Map();
     const previous = records.get(mesId);
     const record = previous || { mesId };
@@ -960,7 +853,6 @@ function syncLongChatDomRenderRecord(state, element, chat) {
     record.element = element;
     record.textChars = textInfo.chars;
     record.messageSignature = textInfo.signature;
-    record.role = role;
     records.set(mesId, record);
     state.messageRecords = records;
     state.messageCount = records.size;
@@ -1119,9 +1011,8 @@ function applyLongChatDomRenderToMessage(element, chat, refreshStats = null, opt
     const mesId = element.getAttribute('mesid') || '';
     const index = Number(mesId);
     const message = Number.isInteger(index) ? chat[index] : null;
-    const role = record?.role || getLongChatDomRenderMessageRole(message);
     const chars = Number(record?.textChars ?? getLongChatMessageTextLength(message));
-    const applySignature = getLongChatDomRenderApplySignature(record, chars, options.chatWidth, role);
+    const applySignature = getLongChatDomRenderApplySignature(record, chars, options.chatWidth);
     const appliedHeight = element.style.getPropertyValue(LONG_CHAT_DOM_RENDER_HEIGHT_VAR);
 
     if (
@@ -1141,7 +1032,7 @@ function applyLongChatDomRenderToMessage(element, chat, refreshStats = null, opt
         ? 0
         : measureLongChatDomRenderMessageHeight(element);
     const cachedHeight = getLongChatDomRenderCachedHeight(mesId);
-    const estimatedHeight = estimateLongChatDomRenderMessageHeight(chars, options.chatWidth, role);
+    const estimatedHeight = estimateLongChatDomRenderMessageHeight(chars, options.chatWidth);
     const height = measuredHeight || cachedHeight || estimatedHeight;
 
     if (refreshStats) {
@@ -1163,17 +1054,15 @@ function applyLongChatDomRenderToMessage(element, chat, refreshStats = null, opt
     if (record) {
         record.appliedSignature = applySignature;
         record.contained = true;
-        record.role = role;
     }
     if (refreshStats) {
         refreshStats.contained += 1;
     }
 }
 
-function getLongChatDomRenderApplySignature(record, chars, width = window.innerWidth, role = 'assistant') {
+function getLongChatDomRenderApplySignature(record, chars, width = window.innerWidth) {
     const widthBucket = Math.max(0, Math.round(Number(width || 0) / LONG_CHAT_DOM_RENDER_WIDTH_BUCKET_SIZE));
     return [
-        getLongChatDomRenderNormalizedRole(role || record?.role),
         record?.messageSignature || `chars:${Number(chars || 0)}`,
         `width:${widthBucket}`,
     ].join('|');
@@ -1217,30 +1106,12 @@ function getLongChatDomRenderEditingMessages(chatElement) {
     return messages;
 }
 
-function estimateLongChatDomRenderMessageHeight(chars, width = window.innerWidth, role = 'assistant') {
-    const fallbackHeight = estimateLongChatDomRenderFallbackMessageHeight(chars, width, role);
-    const estimator = getLongChatDomRenderRoleHeightEstimator(role, width);
-    const calibratedScale = Math.max(1, Number(estimator?.scale || 1));
-    const estimated = (fallbackHeight * calibratedScale * LONG_CHAT_DOM_RENDER_ESTIMATE_SAFETY_MULTIPLIER)
-        + LONG_CHAT_DOM_RENDER_ESTIMATE_EXTRA_PX;
-
-    return Math.max(120, Math.min(LONG_CHAT_DOM_RENDER_ESTIMATE_MAX_HEIGHT, Math.ceil(estimated)));
-}
-
-function estimateLongChatDomRenderFallbackMessageHeight(chars, width = window.innerWidth, role = 'assistant') {
-    const normalizedRole = getLongChatDomRenderNormalizedRole(role);
-    const charsPerLine = getLongChatDomRenderEstimatedCharsPerLine(width);
+function estimateLongChatDomRenderMessageHeight(chars, width = window.innerWidth) {
+    const charsPerLine = Math.max(22, Math.min(80, Math.floor((width || 720) / 16)));
     const lines = Math.max(1, Math.ceil(Number(chars || 0) / charsPerLine));
-    const baseHeight = normalizedRole === 'user' ? 180 : 260;
-    const lineHeight = normalizedRole === 'user' ? 30 : 32;
-    const minHeight = normalizedRole === 'user' ? 140 : 190;
-    const estimated = baseHeight + (lines * lineHeight);
+    const estimated = 230 + (lines * 28);
 
-    return Math.max(minHeight, estimated);
-}
-
-function getLongChatDomRenderEstimatedCharsPerLine(width = window.innerWidth) {
-    return Math.max(22, Math.min(80, Math.floor((width || 720) / 16)));
+    return Math.max(120, Math.min(12000, estimated));
 }
 
 function measureLongChatDomRenderMessageHeight(element) {
@@ -1869,10 +1740,6 @@ function hashLongChatDomRenderStringSample(value) {
     }
 
     return (hash >>> 0).toString(36);
-}
-
-function getLongChatDomRenderMessageRole(message) {
-    return message?.is_user === true ? 'user' : 'assistant';
 }
 
 function isWelcomeRecentChatDirectOpenCompatibilityMode() {
