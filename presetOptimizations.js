@@ -1,5 +1,5 @@
 import { event_types, eventSource, getRequestHeaders, saveSettings } from '../../../../script.js';
-import { getChatCompletionPreset, oai_settings, openai_setting_names, openai_settings, promptManager } from '../../../openai.js';
+import { oai_settings, openai_setting_names, openai_settings, promptManager, settingsToUpdate } from '../../../openai.js';
 import { getPresetManager } from '../../../preset-manager.js';
 import { getTokenizerModel } from '../../../tokenizers.js';
 import { t } from '../../../i18n.js';
@@ -482,6 +482,16 @@ function syncOpenAiPromptManagerStateToSettings() {
     return changed;
 }
 
+function getChatCompletionPresetFromSettings(settings = oai_settings) {
+    const presetBody = {};
+
+    for (const [presetKey, [, settingsKey]] of Object.entries(settingsToUpdate ?? {})) {
+        presetBody[presetKey] = settings?.[settingsKey];
+    }
+
+    return structuredClone(presetBody);
+}
+
 function syncCurrentOpenAiPresetCacheFromSettings(presetName = oai_settings?.preset_settings_openai) {
     if (!presetName || !Array.isArray(openai_settings)) {
         return false;
@@ -495,7 +505,7 @@ function syncCurrentOpenAiPresetCacheFromSettings(presetName = oai_settings?.pre
         return false;
     }
 
-    const preset = getChatCompletionPreset(oai_settings);
+    const preset = getChatCompletionPresetFromSettings(oai_settings);
 
     if (openai_settings[value] && typeof openai_settings[value] === 'object') {
         Object.assign(openai_settings[value], preset);
