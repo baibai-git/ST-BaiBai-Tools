@@ -1,5 +1,6 @@
 import * as chatOptimizations from '../chat/index.js';
 import * as presetOptimizations from '../preset/index.js';
+import { bindPresetBackupRetentionSettings } from '../preset/backupRetention.js';
 import settingsTemplateHtml from '../settings.html?raw';
 import * as worldInfoPageOptimization from '../worldinfo/index.js';
 import { renderExtensionTemplateAsync } from '@sillytavern/scripts/extensions';
@@ -10,6 +11,8 @@ import { LOG_PREFIX } from './constants.js';
 import { applyCustomCssInputOptimization } from './customCss.js';
 import { applyDescriptionCodeMirrorEditorOptimization } from './descEditor.js';
 import { applyFastChatGetOptimization } from './fastChat.js';
+import { bindGenerateBlacklistRetrySettings } from './generateBlacklistRetry.js';
+import { bindGenerateRetrySettings } from './generateRetry.js';
 import { applyTranslateMessageUpdatedOptimization, patchAutoCompletePositioning, patchPowerUserResizeHandler, restoreAutoCompletePositioning, restorePowerUserResizeHandler } from './miscPatches.js';
 import { startPerformanceTrace, stopPerformanceTraceAndExport, updatePerformanceTraceControls } from './perfTrace.js';
 import { applyRegexQuickOperationOptimization } from './regexQuickOps.js';
@@ -307,6 +310,8 @@ async function renderSettingsPanel() {
             applyBaibaokuPanelLocalState(container);
         });
 
+    bindPresetBackupRetentionSettings(container);
+
     $('#bai_bai_toolkit_tokenizer_bulk_count_enabled')
         .prop('checked', settings.tokenizerBulkCountEnabled)
         .on('input', async function () {
@@ -348,6 +353,8 @@ async function renderSettingsPanel() {
         });
 
     chatOptimizations.bindChatOptimizationSettings({ saveSettings: saveExtensionSettings });
+    bindGenerateRetrySettings({ saveSettings: saveExtensionSettings });
+    bindGenerateBlacklistRetrySettings({ saveSettings: saveExtensionSettings });
 
     $('#bai_bai_toolkit_save_request_gzip_enabled')
         .prop('checked', settings.saveRequestGzipEnabled)

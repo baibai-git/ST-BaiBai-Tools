@@ -375,6 +375,20 @@
                                 <input id="bai_bai_toolkit_preset_auto_backup_enabled" type="checkbox" class="checkbox">
                                 <span>&#x9884;&#x8BBE;&#x81EA;&#x52A8;&#x5907;&#x4EFD;</span>
                             </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_preset_backup_auto_cleanup_enabled"
+                                title="默认开启，成功备份后静默清理超限备份，不再弹窗。手动开启或调低上限时需要确认。所有预设合计计算；有备注的备份免清理且不占名额。">
+                                <input id="bai_bai_toolkit_preset_backup_auto_cleanup_enabled" type="checkbox"
+                                    class="checkbox">
+                                <span>自动清理旧备份</span>
+                            </label>
+                            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; min-width: 0;">
+                                <label for="bai_bai_toolkit_preset_backup_keep_count" style="overflow-wrap: anywhere;">普通备份保留数量</label>
+                                <input id="bai_bai_toolkit_preset_backup_keep_count" type="number" min="1" step="1"
+                                    inputmode="numeric" class="text_pole" style="width: 7em; max-width: 100%; margin: 0;"
+                                    title="所有预设合计保留的普通备份份数，有备注的备份不计入。">
+                            </div>
+                            <small id="bai_bai_toolkit_preset_backup_cleanup_status" role="status" hidden
+                                style="overflow-wrap: anywhere;"></small>
                             <label class="checkbox_label" for="bai_bai_toolkit_tokenizer_bulk_count_enabled"
                                 title="刷新 Prompt Manager token 统计时使用 BaiBaoKu 批量计数接口，减少切换模型时的 token 计算请求。">
                                 <input id="bai_bai_toolkit_tokenizer_bulk_count_enabled" type="checkbox"
@@ -485,6 +499,38 @@
 
                                 <small id="bai_bai_toolkit_message_completion_sound_status"
                                     style="opacity: 0.7;"></small>
+                            </div>
+                        </fieldset>
+                        <fieldset
+                            style="border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 8px; margin-bottom: 10px;">
+                            <legend style="font-size: 0.9em; font-weight: bold; opacity: 0.8;"><i
+                                    class="fa-solid fa-rotate-right"></i> 生成失败自动重试</legend>
+                            <div class="flex-container flexFlowColumn" style="gap: 8px;">
+                                <label class="checkbox_label" for="bai_bai_toolkit_generate_retry_enabled"
+                                    style="align-items: center;"
+                                    title="酒馆本体的消息生成请求失败时（网络错误、HTTP 5xx、429 限流等）自动按原请求重发，重发过程中随时可以点停止按钮取消。只处理酒馆自己发起的消息生成，其它插件的独立请求不会被重试。">
+                                    <input id="bai_bai_toolkit_generate_retry_enabled" type="checkbox" class="checkbox">
+                                    <span>生成消息失败自动重试</span>
+                                </label>
+                                <label class="flex-container alignItemCenter flexGap5"
+                                    for="bai_bai_toolkit_generate_retry_max_retries" style="align-items: center;"
+                                    title="每轮生成最多额外重试多少次，取值 1 到 10。请求报错和黑名单命中共用此总次数，不会分别计算。报错重试间隔从 1.5 秒起递增，最多 15 秒；黑名单重试间隔为 1.5 秒。">
+                                    <span style="min-width: 84px;">最大重试次数</span>
+                                    <input id="bai_bai_toolkit_generate_retry_max_retries" class="text_pole"
+                                        type="number" min="1" max="10" step="1" style="flex: 1;">
+                                </label>
+                                <hr style="width: 100%; margin: 0;">
+                                <label class="checkbox_label" for="bai_bai_toolkit_generate_blacklist_retry_enabled"
+                                    style="align-items: center;"
+                                    title="单聊普通生成和重新生成完成后，正文包含任一黑名单文本就丢弃并重试，与请求报错共用上方最大重试次数。总次数耗尽仍命中则丢弃并停止，等待时可用酒馆停止按钮取消。支持流式与非流式；不检查历史消息和独立思维链字段。不处理续写、候选回复、群聊和后台工具生成。启用酒馆原生自动切换回复时暂停本功能，避免重复重试。">
+                                    <input id="bai_bai_toolkit_generate_blacklist_retry_enabled" type="checkbox" class="checkbox">
+                                    <span>黑名单命中自动重试</span>
+                                </label>
+                                <textarea id="bai_bai_toolkit_generate_blacklist_retry_text"
+                                    class="text_pole" rows="5" aria-label="黑名单文本"
+                                    style="display: none; width: 100%; min-width: 0; box-sizing: border-box; resize: vertical;"
+                                    title="每行一条，按包含文本匹配，忽略英文大小写和空行；不支持正则表达式。"
+                                    placeholder="抱歉，我无法&#10;I cannot assist"></textarea>
                             </div>
                         </fieldset>
                         <label class="checkbox_label" for="bai_bai_toolkit_update_prompt_on_available_enabled"

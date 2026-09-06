@@ -1,5 +1,6 @@
 import { event_types, eventSource, getRequestHeaders } from '@sillytavern/script';
 import { oai_settings } from '@sillytavern/scripts/openai';
+import { schedulePresetBackupCleanup } from './backupRetention.js';
 import { PRESET_AUTO_BACKUP_FETCH_KEY, PRESET_AUTO_BACKUP_RENAME_HANDLER_KEY, PRESET_BACKUP_SAVE_URL, PRESET_RENAME_SAVE_GATE_TIMEOUT_MS, PRESET_SAVE_URL } from './constants.js';
 import { clearPendingPresetPromptChangesForSavedRevision, getPresetPromptSaveRevision } from './pendingChanges.js';
 import { LOG_PREFIX, extensionState, settings } from './state.js';
@@ -130,11 +131,18 @@ async function schedulePresetAutoBackupFromRequest(state, input, init, parsedBod
 
 async function sendPresetAutoBackup(state, body) {
     try {
-        await state.originalFetch(PRESET_BACKUP_SAVE_URL, {
+        const response = await state.originalFetch(PRESET_BACKUP_SAVE_URL, {
             method: 'POST',
             headers: getRequestHeaders(),
             body: JSON.stringify(body),
         });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        if (payload?.ok !== true || payload.error
+            || typeof payload.data?.fileName !== 'string' || !payload.data.fileName.trim()) {
+            throw new Error('Preset backup save was not confirmed');
+        }
+        void schedulePresetBackupCleanup();
     } catch (error) {
         console.debug(`${LOG_PREFIX} Failed to create preset auto backup`, error);
     }

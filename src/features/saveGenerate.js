@@ -1329,8 +1329,35 @@ function installSaveGenerateMessageDeleteHandler(state) {
 
     state.messageDeleteHandlerInstalled = true;
     eventSource.on(event_types.MESSAGE_DELETED, () => {
-        void discardCurrentChatSaveGenerateJobsAfterMessageDelete(state);
+        const cleanup = {
+            chatId: getCurrentSaveGenerateChatId(),
+            promise: discardCurrentChatSaveGenerateJobsAfterMessageDelete(state),
+        };
+        state.messageDeleteCleanup = cleanup;
+        return cleanup.promise;
     });
+}
+
+async function waitForSaveGenerateMessageDelete(chatId) {
+    const state = globalThis[SAVE_GENERATE_FETCH_KEY];
+    if (!state || state.backendAvailable !== true) {
+        return;
+    }
+
+    const cleanup = state.messageDeleteCleanup;
+    if (!cleanup || cleanup.chatId !== chatId || await cleanup.promise !== true) {
+        throw new Error('Background generation cleanup failed');
+    }
+}
+
+async function discardSaveGenerateJobsBeforeRetry(chatId) {
+    const state = globalThis[SAVE_GENERATE_FETCH_KEY];
+    if (!state || state.backendAvailable !== true) {
+        return;
+    }
+    if (chatId !== getCurrentSaveGenerateChatId() || await discardCurrentChatSaveGenerateJobsAfterMessageDelete(state) !== true) {
+        throw new Error('Background generation cleanup failed');
+    }
 }
 
 async function discardCurrentChatSaveGenerateJobsAfterMessageDelete(state) {
@@ -1351,8 +1378,10 @@ async function discardCurrentChatSaveGenerateJobsAfterMessageDelete(state) {
         state.lastResumeCheckChatId = chatId;
         state.lastResumeCheckAt = Date.now();
         console.debug(`${LOG_PREFIX} save-generate discarded jobs after message delete`, result);
+        return true;
     } catch (error) {
         console.debug(`${LOG_PREFIX} save-generate discard after message delete failed`, error);
+        return false;
     }
 }
 
@@ -1364,19 +1393,27 @@ async function discardSaveGenerateJobsForChat(fetchFn, chatId) {
 
     const headers = new Headers(getRequestHeaders());
     headers.set('Content-Type', 'application/json');
-    const response = await fetchFn(BAIBAOKU_SAVE_GENERATE_DISCARD_URL, {
-        method: 'POST',
-        headers,
-        cache: 'no-store',
-        body: JSON.stringify({ chatId: normalizedChatId }),
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || payload?.ok !== true) {
-        const error = new Error(payload?.message || payload?.error?.message || `HTTP ${response.status}`);
-        error.status = response.status;
-        throw error;
+    // Deletion now waits for cleanup; a dead connection must not block it forever.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+    try {
+        const response = await fetchFn(BAIBAOKU_SAVE_GENERATE_DISCARD_URL, {
+            method: 'POST',
+            headers,
+            cache: 'no-store',
+            body: JSON.stringify({ chatId: normalizedChatId }),
+            signal: controller.signal,
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || payload?.ok !== true) {
+            const error = new Error(payload?.message || payload?.error?.message || `HTTP ${response.status}`);
+            error.status = response.status;
+            throw error;
+        }
+        return payload.data || null;
+    } finally {
+        clearTimeout(timer);
     }
-    return payload.data || null;
 }
 
 function queueSaveGenerateResumeCheck(state, reason = 'unknown', delayMs = SAVE_GENERATE_RESUME_CHECK_DELAY_MS) {
@@ -2496,6 +2533,7 @@ export {
     delaySaveGeneratePoll,
     describeSaveGenerateBody,
     discardCurrentChatSaveGenerateJobsAfterMessageDelete,
+    discardSaveGenerateJobsBeforeRetry,
     discardSaveGenerateJobsForChat,
     fetchNativeSaveForSaveGenerateRecord,
     fetchSaveGenerate,
@@ -2579,6 +2617,7 @@ export {
     updateSaveGenerateResumeDisplay,
     waitForSaveGenerateCurrentChatReady,
     waitForSaveGenerateRecoveryGate,
+    waitForSaveGenerateMessageDelete,
     waitSaveGenerateJobTerminal,
     waitSaveGenerateJobTerminalEventStream,
     waitSaveGenerateJobTerminalPolling,

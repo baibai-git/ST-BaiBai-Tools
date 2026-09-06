@@ -1,7 +1,8 @@
 import { getRequestHeaders } from '@sillytavern/script';
 import { getPresetManager } from '@sillytavern/scripts/preset-manager';
 import { skipNextPresetAutoBackup } from './autoBackup.js';
-import { OPENAI_SETTINGS_SELECTOR, PRESET_BACKUP_PREVIEW_APP_KEY, PRESET_BACKUP_PREVIEW_BATCH_DELETE_CONCURRENCY, PRESET_BACKUP_PREVIEW_CLOSING_CLASS, PRESET_BACKUP_PREVIEW_DELETE_URL, PRESET_BACKUP_PREVIEW_DOWNLOAD_URL, PRESET_BACKUP_PREVIEW_EXPAND_ANIMATION_MS, PRESET_BACKUP_PREVIEW_LIST_URL, PRESET_BACKUP_PREVIEW_NOTE_MAX_LENGTH, PRESET_BACKUP_PREVIEW_NOTE_URL, PRESET_BACKUP_PREVIEW_PAGE_SIZE, PRESET_BACKUP_PREVIEW_RENAME_URL, PRESET_BACKUP_PREVIEW_UI_ID, PRESET_BACKUP_PREVIEW_UI_KEY, PRESET_BACKUP_PREVIEW_UI_STYLE_ID } from './constants.js';
+import { deletePresetBackupFile, fetchPresetBackupItems, PRESET_BACKUPS_CLEANED_EVENT, runPresetBackupMutation } from './backupRetention.js';
+import { OPENAI_SETTINGS_SELECTOR, PRESET_BACKUP_PREVIEW_APP_KEY, PRESET_BACKUP_PREVIEW_BATCH_DELETE_CONCURRENCY, PRESET_BACKUP_PREVIEW_CLOSING_CLASS, PRESET_BACKUP_PREVIEW_DOWNLOAD_URL, PRESET_BACKUP_PREVIEW_EXPAND_ANIMATION_MS, PRESET_BACKUP_PREVIEW_NOTE_MAX_LENGTH, PRESET_BACKUP_PREVIEW_NOTE_URL, PRESET_BACKUP_PREVIEW_PAGE_SIZE, PRESET_BACKUP_PREVIEW_RENAME_URL, PRESET_BACKUP_PREVIEW_UI_ID, PRESET_BACKUP_PREVIEW_UI_KEY, PRESET_BACKUP_PREVIEW_UI_STYLE_ID } from './constants.js';
 import { LOG_PREFIX, extensionState } from './state.js';
 import { loadPresetVueModule } from './vueList.js';
 
@@ -104,6 +105,7 @@ function createPresetBackupPreviewModel() {
         page: 1,
         hasLoaded: false,
         loading: false,
+        refreshAgain: false,
         status: '',
         composing: false,
         renameDialogOpen: false,
@@ -136,7 +138,16 @@ function createPresetBackupPreviewRootComponent(vue, model) {
         data() {
             return model;
         },
+        mounted() {
+            document.addEventListener(PRESET_BACKUPS_CLEANED_EVENT, this.onBackupsCleaned);
+        },
+        beforeUnmount() {
+            document.removeEventListener(PRESET_BACKUPS_CLEANED_EVENT, this.onBackupsCleaned);
+        },
         computed: {
+            protectedCount() {
+                return this.items.filter(item => item.note).length;
+            },
             normalizedQuery() {
                 return this.query.trim().toLowerCase();
             },
@@ -195,6 +206,12 @@ function createPresetBackupPreviewRootComponent(vue, model) {
             },
         },
         methods: {
+            onBackupsCleaned(event) {
+                const deleted = new Set(event.detail.deletedFileNames);
+                this.items = this.items.filter(item => !deleted.has(item.fileName));
+                this.selectedFileNames = this.selectedFileNames.filter(fileName => !deleted.has(fileName));
+                if (this.hasLoaded || this.loading) void this.refresh();
+            },
             clampPage() {
                 const nextPage = Math.min(Math.max(1, this.page), this.pageCount);
 
@@ -222,6 +239,7 @@ function createPresetBackupPreviewRootComponent(vue, model) {
             },
             async refresh() {
                 if (this.loading) {
+                    this.refreshAgain = true;
                     return;
                 }
 
@@ -239,6 +257,10 @@ function createPresetBackupPreviewRootComponent(vue, model) {
                     this.hasLoaded = true;
                 } finally {
                     this.loading = false;
+                    if (this.refreshAgain) {
+                        this.refreshAgain = false;
+                        void this.refresh();
+                    }
                 }
             },
             prevPage() {
@@ -673,6 +695,16 @@ function createPresetBackupPreviewRootComponent(vue, model) {
                             onClick: this.refresh,
                         }, [h('i', { class: 'fa-solid fa-rotate-right' })]),
                     ]),
+                    this.hasLoaded ? h('div', {
+                        class: 'bai-bai-preset-backup-counts',
+                        'aria-live': 'polite',
+                    }, [
+                        h('span', `普通 ${this.items.length - this.protectedCount} 份`),
+                        h('span', { title: '有备注的备份免自动清理，不占普通备份名额' }, [
+                            h('i', { class: 'fa-solid fa-lock', 'aria-hidden': 'true' }),
+                            ` 已保护 ${this.protectedCount} 份`,
+                        ]),
+                    ]) : null,
                     this.selectionMode ? renderPresetBackupSelectionBar(h, this) : null,
                     h('div', { class: 'bai-bai-preset-backup-list', role: 'list' }, this.pagedItems.length
                         ? this.pagedItems.map(item => renderPresetBackupPreviewItem(h, this, item))
@@ -819,10 +851,10 @@ function renderPresetBackupPreviewNote(h, view, item) {
         return h('button', {
             type: 'button',
             class: 'bai-bai-preset-backup-item-note',
-            title: `${item.note}\n（点击编辑备注）`,
+            title: `${item.note}\n已保护，免自动清理（点击编辑备注）`,
             onClick,
         }, [
-            h('i', { class: 'fa-regular fa-pen-to-square' }),
+            h('i', { class: 'fa-solid fa-lock' }),
             h('span', { class: 'bai-bai-preset-backup-item-note-text' }, item.note),
         ]);
     }
@@ -830,7 +862,7 @@ function renderPresetBackupPreviewNote(h, view, item) {
     return h('button', {
         type: 'button',
         class: 'bai-bai-preset-backup-item-note bai-bai-preset-backup-item-note-empty',
-        title: '添加备注',
+        title: '添加备注并保护备份，免自动清理',
         onClick,
     }, [
         h('i', { class: 'fa-solid fa-plus' }),
@@ -1027,23 +1059,7 @@ function renderPresetBackupPreviewActionButton(h, { className = '', icon, title,
 }
 
 async function fetchPresetBackupPreviewItems() {
-    const response = await fetch(PRESET_BACKUP_PREVIEW_LIST_URL, {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({}),
-    });
-
-    if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-    }
-
-    const payload = await response.json();
-    const rawItems = Array.isArray(payload?.data?.items)
-        ? payload.data.items
-        : Array.isArray(payload?.items)
-            ? payload.items
-            : [];
-
+    const rawItems = await fetchPresetBackupItems();
     return rawItems
         .map(normalizePresetBackupPreviewItem)
         .filter(Boolean);
@@ -1065,32 +1081,23 @@ async function renamePresetBackupPreviewItem(fileName, showName) {
 }
 
 async function updatePresetBackupPreviewNote(fileName, note) {
-    const response = await fetch(PRESET_BACKUP_PREVIEW_NOTE_URL, {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ fileName, note }),
+    return runPresetBackupMutation(async () => {
+        const response = await fetch(PRESET_BACKUP_PREVIEW_NOTE_URL, {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ fileName, note }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        if (payload?.ok === false || payload?.error) throw new Error('Backup note was not saved');
+        return payload?.data ?? payload;
     });
-
-    if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-    }
-
-    const payload = await response.json();
-    return payload?.data ?? payload;
 }
 
 async function deletePresetBackupPreviewItem(fileName) {
-    const response = await fetch(PRESET_BACKUP_PREVIEW_DELETE_URL, {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ fileName }),
-    });
-
-    if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-    }
-
-    return response.json().catch(() => ({}));
+    // Wait for the active automatic pass without serializing manual batch workers.
+    await runPresetBackupMutation(() => {});
+    return deletePresetBackupFile(fileName);
 }
 
 async function downloadPresetBackupPreviewItem(fileName) {
@@ -1416,6 +1423,15 @@ function applyPresetBackupPreviewUiStyle() {
     flex-direction: column;
     gap: 6px;
     padding-right: 2px;
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    min-width: 0;
+    font-size: 0.86em;
+    opacity: 0.8;
 }
 
 #${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item {

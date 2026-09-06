@@ -55,6 +55,33 @@ const SAVE_GENERATE_BACKEND_CHECK_TTL_MS = 60_000;
 const SAVE_GENERATE_BACKEND_MISSING_RECHECK_MS = 10_000;
 const SAVE_GENERATE_BACKEND_CHECK_TIMEOUT_MS = 1500;
 const SAVE_GENERATE_LOCAL_REQUEST_GUARD_RELEASE_DELAY_MS = 1000;
+const GENERATE_RETRY_FETCH_KEY = '__baiBaiToolkitGenerateRetryFetchPatched';
+// 酒馆本体消息生成会打到的后端路径;柏宝库 save-generate 走自己的地址,不在其中。
+const GENERATE_RETRY_PATHS = new Set([
+    '/api/backends/chat-completions/generate',
+    '/api/backends/text-completions/generate',
+    '/api/backends/kobold/generate',
+    '/api/novelai/generate',
+]);
+// Generate() 里会产出消息的类型;quiet 属于后台工具生成,不重试。
+const GENERATE_RETRY_MESSAGE_TYPES = new Set([
+    'normal',
+    'regenerate',
+    'swipe',
+    'continue',
+    'impersonate',
+]);
+const GENERATE_RETRY_MIN_RETRIES = 1;
+const GENERATE_RETRY_MAX_RETRIES = 10;
+const GENERATE_RETRY_DEFAULT_RETRIES = 3;
+const GENERATE_RETRY_WINDOW_TTL_MS = 60_000;
+const GENERATE_RETRY_BODY_TTL_MS = 60_000;
+const GENERATE_RETRY_MAX_PENDING_BODIES = 4;
+const GENERATE_RETRY_BASE_DELAY_MS = 1500;
+const GENERATE_RETRY_MAX_DELAY_MS = 15_000;
+const GENERATE_RETRY_REASON_MAX_LENGTH = 60;
+// 配置或提示词本身的问题重发多少次都一样,直接交回酒馆报错;499 是柏宝库的「已取消」。
+const GENERATE_RETRY_PERMANENT_STATUSES = new Set([400, 401, 403, 404, 413, 422, 499]);
 const SAVE_REQUEST_GZIP_FETCH_KEY = '__baiBaiToolkitSaveRequestGzipFetchPatched';
 const FAST_CHAT_GET_FETCH_KEY = '__baiBaiToolkitFastChatGetFetchPatched';
 const FAST_CHAT_GET_JQUERY_TRIGGER_GUARD_KEY = '__baiBaiToolkitFastChatGetJQueryTriggerGuardPatched';
@@ -374,6 +401,19 @@ export {
     FAST_CHAT_GET_SAVE_PATHS,
     FAST_SETTINGS_BOOTSTRAP_CACHE_MS,
     FAST_SETTINGS_BOOTSTRAP_FETCH_KEY,
+    GENERATE_RETRY_BASE_DELAY_MS,
+    GENERATE_RETRY_BODY_TTL_MS,
+    GENERATE_RETRY_DEFAULT_RETRIES,
+    GENERATE_RETRY_FETCH_KEY,
+    GENERATE_RETRY_MAX_DELAY_MS,
+    GENERATE_RETRY_MAX_PENDING_BODIES,
+    GENERATE_RETRY_MAX_RETRIES,
+    GENERATE_RETRY_MESSAGE_TYPES,
+    GENERATE_RETRY_MIN_RETRIES,
+    GENERATE_RETRY_PATHS,
+    GENERATE_RETRY_PERMANENT_STATUSES,
+    GENERATE_RETRY_REASON_MAX_LENGTH,
+    GENERATE_RETRY_WINDOW_TTL_MS,
     LAZY_THEME_CHANGE_GUARD_KEY,
     LOG_PREFIX,
     PAGE_RESTORE_SELECTION_GUARD_KEY,
