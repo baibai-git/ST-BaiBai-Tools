@@ -24,6 +24,8 @@ const defaultSettings = {
     chatKeyboardScanReductionEnabled: true,
     extensionManifestBundleEnabled: true,
     presetAutoBackupEnabled: true,
+    presetBackupAutoCleanupEnabled: true,
+    presetBackupKeepCount: 200,
     characterListAvatarLazyLoadEnabled: true,
     fastChatListEnabled: true,
     welcomeRecentChatDirectOpenEnabled: true,
@@ -61,6 +63,10 @@ const defaultSettings = {
     messageCompletionSoundVolume: 0.8,
     messageCompletionSoundLocalFileName: '',
     messageCompletionSoundKeepAliveEnabled: true,
+    generateRetryEnabled: false,
+    generateRetryMaxRetries: 3,
+    generateBlacklistRetryEnabled: false,
+    generateBlacklistRetryText: '',
 };
 const linkedPresetOptimizationSettingKeys = [
     'presetScrollOptimizationEnabled',
@@ -69,6 +75,7 @@ const linkedPresetOptimizationSettingKeys = [
     'presetToggleOptimizationEnabled',
 ];
 const legacySettingsKeys = [
+    'generateBlacklistRetryMaxRetries',
     'textareaScrollOptimizationEnabled',
     'descriptionShadowEditorEnabled',
     'descriptionInputBubbleOptimizationEnabled',

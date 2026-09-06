@@ -4,6 +4,7 @@ node_modules/
 .agents/
 .claude/
 .codex/
+.pi/
 .aionrs/
 Trace-*.json
 dist/*.map
