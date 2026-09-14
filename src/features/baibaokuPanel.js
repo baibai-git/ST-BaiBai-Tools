@@ -224,7 +224,7 @@ async function refreshBaibaokuPanelStatus(container, { force = false } = {}) {
 
     try {
         const status = await fetchBaibaokuStatus();
-        markSaveGenerateBackendAvailable(globalThis[SAVE_GENERATE_FETCH_KEY], true);
+        markSaveGenerateBackendAvailable(globalThis[SAVE_GENERATE_FETCH_KEY], true, status);
         const driver = status?.driver;
         panelState.cache = {
             ...(panelState.cache || {}),

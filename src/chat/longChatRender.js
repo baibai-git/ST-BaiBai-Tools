@@ -1,7 +1,7 @@
 import * as scriptModule from '@sillytavern/script';
 import { event_types, eventSource, getCurrentChatId } from '@sillytavern/script';
-import { LONG_CHAT_DOM_RENDER_BOTTOM_ANCHORED_CLASS, LONG_CHAT_DOM_RENDER_BOTTOM_ANCHOR_CLASS, LONG_CHAT_DOM_RENDER_DEBUG_LOG_INTERVAL_MS, LONG_CHAT_DOM_RENDER_DEBUG_LOG_SLOW_MS, LONG_CHAT_DOM_RENDER_ESTIMATE_EXTRA_PX, LONG_CHAT_DOM_RENDER_ESTIMATE_MAX_HEIGHT, LONG_CHAT_DOM_RENDER_ESTIMATE_SAFETY_MULTIPLIER, LONG_CHAT_DOM_RENDER_ESTIMATOR_ALPHA, LONG_CHAT_DOM_RENDER_ESTIMATOR_MAX_SCALE, LONG_CHAT_DOM_RENDER_FORCE_DISABLED, LONG_CHAT_DOM_RENDER_GENERATION_ANCHOR_RELEASE_MS, LONG_CHAT_DOM_RENDER_HEIGHT_VAR, LONG_CHAT_DOM_RENDER_LATEST_MESSAGE_TOP_OFFSET_MAX, LONG_CHAT_DOM_RENDER_LATEST_MESSAGE_TOP_OFFSET_MIN, LONG_CHAT_DOM_RENDER_LATEST_MESSAGE_TOP_OFFSET_RATIO, LONG_CHAT_DOM_RENDER_MESSAGE_COUNT_THRESHOLD, LONG_CHAT_DOM_RENDER_MIN_TEXT_THRESHOLD, LONG_CHAT_DOM_RENDER_SCROLL_BOTTOM_SETTLE_MS, LONG_CHAT_DOM_RENDER_SCROLL_BOTTOM_STABLE_FRAMES, LONG_CHAT_DOM_RENDER_SCROLL_BOTTOM_TOLERANCE, LONG_CHAT_DOM_RENDER_SINGLE_MESSAGE_THRESHOLD, LONG_CHAT_DOM_RENDER_STYLE_ID, LONG_CHAT_DOM_RENDER_TEXT_THRESHOLD, LONG_CHAT_DOM_RENDER_UNCONTAINED_TAIL_MESSAGES, LONG_CHAT_DOM_RENDER_WIDTH_BUCKET_SIZE, MOBILE_MESSAGE_EDIT_SELECTOR } from './constants.js';
-import { LOG_PREFIX, extensionState, recordLongDomRefresh, settings } from './state.js';
+import { LONG_CHAT_DOM_RENDER_BOTTOM_ANCHORED_CLASS, LONG_CHAT_DOM_RENDER_BOTTOM_ANCHOR_CLASS, LONG_CHAT_DOM_RENDER_ESTIMATE_EXTRA_PX, LONG_CHAT_DOM_RENDER_ESTIMATE_MAX_HEIGHT, LONG_CHAT_DOM_RENDER_ESTIMATE_SAFETY_MULTIPLIER, LONG_CHAT_DOM_RENDER_ESTIMATOR_ALPHA, LONG_CHAT_DOM_RENDER_ESTIMATOR_MAX_SCALE, LONG_CHAT_DOM_RENDER_FORCE_DISABLED, LONG_CHAT_DOM_RENDER_GENERATION_ANCHOR_RELEASE_MS, LONG_CHAT_DOM_RENDER_HEIGHT_VAR, LONG_CHAT_DOM_RENDER_LATEST_MESSAGE_TOP_OFFSET_MAX, LONG_CHAT_DOM_RENDER_LATEST_MESSAGE_TOP_OFFSET_MIN, LONG_CHAT_DOM_RENDER_LATEST_MESSAGE_TOP_OFFSET_RATIO, LONG_CHAT_DOM_RENDER_MESSAGE_COUNT_THRESHOLD, LONG_CHAT_DOM_RENDER_MIN_TEXT_THRESHOLD, LONG_CHAT_DOM_RENDER_SCROLL_BOTTOM_SETTLE_MS, LONG_CHAT_DOM_RENDER_SCROLL_BOTTOM_STABLE_FRAMES, LONG_CHAT_DOM_RENDER_SCROLL_BOTTOM_TOLERANCE, LONG_CHAT_DOM_RENDER_SINGLE_MESSAGE_THRESHOLD, LONG_CHAT_DOM_RENDER_STYLE_ID, LONG_CHAT_DOM_RENDER_TEXT_THRESHOLD, LONG_CHAT_DOM_RENDER_UNCONTAINED_TAIL_MESSAGES, LONG_CHAT_DOM_RENDER_WIDTH_BUCKET_SIZE, MOBILE_MESSAGE_EDIT_SELECTOR } from './constants.js';
+import { extensionState, recordLongDomRefresh, settings } from './state.js';
 import { isWelcomePageDisplayed } from './welcomeRecent.js';
 
 function applyLongChatDomRenderOptimization() {
@@ -352,7 +352,6 @@ function refreshLongChatDomRenderOptimization({ reason = '', mode = 'full', mess
 
     refreshStats.duration = performance.now() - startedAt;
     recordLongDomRefresh?.(refreshStats);
-    logLongChatDomRenderRefresh(refreshStats, 'full');
 }
 
 function refreshLongChatDomRenderIncremental({ state, chatElement, chat, reason = '', messageIds = [] } = {}) {
@@ -448,23 +447,7 @@ function refreshLongChatDomRenderIncremental({ state, chatElement, chat, reason 
 
     refreshStats.duration = performance.now() - startedAt;
     recordLongDomRefresh?.(refreshStats);
-    logLongChatDomRenderRefresh(refreshStats, 'incremental');
     return true;
-}
-
-function logLongChatDomRenderRefresh(stats, mode = 'full') {
-    const state = getLongChatDomRenderState();
-    const now = performance.now();
-    const duration = Number(stats?.duration || 0);
-    const lastLoggedAt = Number(state.lastLongDomDebugLogAt || 0);
-
-    if (duration < LONG_CHAT_DOM_RENDER_DEBUG_LOG_SLOW_MS
-        && now - lastLoggedAt < LONG_CHAT_DOM_RENDER_DEBUG_LOG_INTERVAL_MS) {
-        return;
-    }
-
-    state.lastLongDomDebugLogAt = now;
-    console.info(`${LOG_PREFIX} longdom mode=${mode} reason=${stats?.reason || 'refresh'} duration=${duration.toFixed(1)}ms messages=${stats?.messages || 0} optimized=${stats?.optimized ? 'yes' : 'no'} contained=${stats?.contained || 0} tail=${stats?.tail || 0} cached=${stats?.cached || 0} estimated=${stats?.estimated || 0} measured=${stats?.measured || 0} skipped=${stats?.skipped || 0}`);
 }
 
 function updateLongChatDomRenderRoleHeightEstimatorsForIds(state, chatElement, messageIds, chat, width, measuredHeights = null) {
@@ -1290,7 +1273,6 @@ function scheduleLongChatDomRenderScrollToLatestMessageStart(reason = '') {
     state.autoScrollLastHeight = 0;
     state.autoScrollLastTargetTop = null;
     state.autoScrollStableFrames = 0;
-    state.autoScrollLogged = false;
 
     settleLongChatDomRenderScrollToLatestMessageStart(token, reason);
 }
@@ -1303,7 +1285,6 @@ function scheduleLongChatDomRenderScrollToBottom(reason = '') {
     state.autoScrollStartedAt = performance.now();
     state.autoScrollLastHeight = 0;
     state.autoScrollStableFrames = 0;
-    state.autoScrollLogged = false;
 
     settleLongChatDomRenderScrollToBottom(token, reason);
 }
@@ -1369,11 +1350,6 @@ function settleLongChatDomRenderScrollToBottom(token, reason = '') {
     }
 
     restoreLongChatDomRenderScrollBehavior(state, { finalScrollToBottom: true });
-
-    if (!state.autoScrollLogged) {
-        state.autoScrollLogged = true;
-        console.debug(`${LOG_PREFIX} Long chat DOM render optimization scrolled to bottom (${reason})`);
-    }
 }
 
 function ensureLongChatDomRenderInstantScroll(chat, state) {
@@ -1493,11 +1469,6 @@ function settleLongChatDomRenderScrollToLatestMessageStart(token, reason = '') {
     }
 
     restoreLongChatDomRenderScrollBehavior(state);
-
-    if (!state.autoScrollLogged) {
-        state.autoScrollLogged = true;
-        console.debug(`${LOG_PREFIX} Long chat DOM render optimization scrolled to latest message start (${reason})`);
-    }
 }
 
 function handleLongChatDomRenderScroll(chat) {
@@ -1684,7 +1655,6 @@ export {
     isLongChatDomRenderNearViewport,
     isLongChatDomRenderOptimizedChat,
     isLongChatDomRenderRelevantChildMutation,
-    logLongChatDomRenderRefresh,
     measureLongChatDomRenderMessageHeight,
     normalizeLongChatDomRenderMessageIds,
     observeLongChatDomRenderMessage,
