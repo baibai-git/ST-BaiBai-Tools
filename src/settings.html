@@ -522,7 +522,7 @@
                                 <hr style="width: 100%; margin: 0;">
                                 <label class="checkbox_label" for="bai_bai_toolkit_generate_blacklist_retry_enabled"
                                     style="align-items: center;"
-                                    title="单聊普通生成和重新生成完成后，正文包含任一黑名单文本就丢弃并重试，与请求报错共用上方最大重试次数。总次数耗尽仍命中则丢弃并停止，等待时可用酒馆停止按钮取消。支持流式与非流式；不检查历史消息和独立思维链字段。不处理续写、候选回复、群聊和后台工具生成。启用酒馆原生自动切换回复时暂停本功能，避免重复重试。">
+                                    title="单聊普通生成和重新生成收尾后，最新回复正文包含任一黑名单文本就调用酒馆原生重新生成，与请求报错共用上方最大重试次数。总次数耗尽仍命中则保留最后回复并停止，等待时可用酒馆停止按钮取消。支持流式与非流式；不检查历史消息和独立思维链字段。不处理续写、候选回复、群聊和后台工具生成。启用酒馆原生自动切换回复时暂停本功能，避免重复重试。">
                                     <input id="bai_bai_toolkit_generate_blacklist_retry_enabled" type="checkbox" class="checkbox">
                                     <span>黑名单命中自动重试</span>
                                 </label>

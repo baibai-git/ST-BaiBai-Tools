@@ -1,5 +1,6 @@
 import { event_types, eventSource } from '@sillytavern/script';
 import { isMobile } from '@sillytavern/scripts/RossAscends-mods';
+import { GENERATE_BLACKLIST_SETTLED_EVENT } from '../features/constants.js';
 import { BUILTIN_COMPLETION_SOUNDS, MESSAGE_COMPLETION_SOUND_COOLDOWN_MS, MESSAGE_COMPLETION_SOUND_DB_NAME, MESSAGE_COMPLETION_SOUND_DB_VERSION, MESSAGE_COMPLETION_SOUND_KEEP_ALIVE_SRC, MESSAGE_COMPLETION_SOUND_LOCAL_KEY, MESSAGE_COMPLETION_SOUND_MAX_LOCAL_BYTES, MESSAGE_COMPLETION_SOUND_SOURCES, MESSAGE_COMPLETION_SOUND_STORE } from './constants.js';
 import { LOG_PREFIX, extensionState, settings } from './state.js';
 
@@ -256,7 +257,9 @@ function installMessageCompletionSoundHandlers() {
         return;
     }
 
-    const generationStartedHandler = () => {
+    const generationStartedHandler = (_type, _options, dryRun) => {
+        if (dryRun) return;
+        state.waitingForBlacklist = false;
         state.generationActive = true;
         state.generationStopped = false;
         startMessageCompletionSoundKeepAlive().catch(error => {
@@ -269,8 +272,9 @@ function installMessageCompletionSoundHandlers() {
         }
         stopMessageCompletionSoundKeepAlive();
     };
-    const generationEndedHandler = () => {
-        const shouldPlay = state.generationActive && !state.generationStopped;
+    const finishGeneration = completed => {
+        const shouldPlay = completed && state.generationActive && !state.generationStopped;
+        state.waitingForBlacklist = false;
         state.generationActive = false;
         state.generationStopped = false;
 
@@ -280,15 +284,30 @@ function installMessageCompletionSoundHandlers() {
         }
 
         playSelectedMessageCompletionSound().catch(error => {
-            console.debug(`${LOG_PREFIX} Failed to play message completion sound`, error);
+            console.warn(`${LOG_PREFIX} Failed to play message completion sound`, error);
         }).finally(() => {
             stopMessageCompletionSoundKeepAlive();
         });
     };
 
+    const generationEndedHandler = () => {
+        // ponytail: use the retry module's final verdict; never scan the reply twice or block ST's end event.
+        if (state.generationActive && !state.generationStopped && extensionState.generateBlacklistRetry?.run) {
+            state.waitingForBlacklist = true;
+            return;
+        }
+        finishGeneration(true);
+    };
+    const blacklistSettledHandler = completed => {
+        if (!state.waitingForBlacklist) return;
+        finishGeneration(completed);
+    };
+
     addMessageCompletionSoundEventHandler(event_types.GENERATION_STARTED, generationStartedHandler);
     addMessageCompletionSoundEventHandler(event_types.GENERATION_STOPPED, generationStoppedHandler);
     addMessageCompletionSoundEventHandler(event_types.GENERATION_ENDED, generationEndedHandler);
+    addMessageCompletionSoundEventHandler(GENERATE_BLACKLIST_SETTLED_EVENT, blacklistSettledHandler);
+    addMessageCompletionSoundEventHandler(event_types.CHAT_CHANGED, () => finishGeneration(false));
     state.installed = true;
     syncMessageCompletionSoundKeepAliveHandlers();
 }
@@ -311,6 +330,7 @@ function removeMessageCompletionSoundHandlers() {
 
     state.eventHandlers = [];
     state.installed = false;
+    state.waitingForBlacklist = false;
     state.generationActive = false;
     state.generationStopped = false;
     removeMessageCompletionSoundKeepAliveHandlers();
@@ -474,6 +494,8 @@ async function playSelectedMessageCompletionSound({ preview = false } = {}) {
 
     const audio = getMessageCompletionSoundAudio();
     const src = await getMessageCompletionSoundPlaybackSrc();
+    // Loading a local sound is asynchronous; the user may have disabled it meanwhile.
+    if (!preview && !settings.messageCompletionSoundEnabled) return false;
     audio.volume = clampMessageCompletionSoundVolume(settings.messageCompletionSoundVolume);
 
     if (audio.src !== src) {

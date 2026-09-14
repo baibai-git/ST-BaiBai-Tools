@@ -3,9 +3,10 @@ import * as scriptModule from '@sillytavern/script';
 import { characters, event_types, eventSource, getCurrentChatId, getRequestHeaders, reloadCurrentChat, this_chid } from '@sillytavern/script';
 import { selected_group } from '@sillytavern/scripts/group-chats';
 import { sendMessageAs } from '@sillytavern/scripts/slash-commands';
-import { BAIBAOKU_SAVE_GENERATE_DISCARD_URL, BAIBAOKU_SAVE_GENERATE_URL, BAIBAOKU_STATUS_URL, LOG_PREFIX, SAVE_GENERATE_BACKEND_CHECK_TIMEOUT_MS, SAVE_GENERATE_BACKEND_CHECK_TTL_MS, SAVE_GENERATE_BACKEND_MISSING_RECHECK_MS, SAVE_GENERATE_DISPLAY_CLASS, SAVE_GENERATE_DISPLAY_STYLE_ID, SAVE_GENERATE_FETCH_KEY, SAVE_GENERATE_INTENT_TTL_MS, SAVE_GENERATE_JOB_ID_HEADER, SAVE_GENERATE_LOCAL_REQUEST_GUARD_RELEASE_DELAY_MS, SAVE_GENERATE_MAX_INTENTS, SAVE_GENERATE_PATH, SAVE_GENERATE_POLL_INTERVAL_MS, SAVE_GENERATE_POLL_TIMEOUT_MS, SAVE_GENERATE_RECOVERY_BLOCK_SELECTOR, SAVE_GENERATE_RECOVERY_BLOCK_TOAST_INTERVAL_MS, SAVE_GENERATE_RECOVERY_CHAT_READY_INTERVAL_MS, SAVE_GENERATE_RECOVERY_CHAT_READY_TIMEOUT_MS, SAVE_GENERATE_RESUME_CHECK_COOLDOWN_MS, SAVE_GENERATE_RESUME_CHECK_DELAY_MS, SAVE_GENERATE_SAVE_PATH, SAVE_GENERATE_SEEN_STORAGE_PREFIX, SAVE_GENERATE_STATUS_HEADER } from './constants.js';
+import { BAIBAOKU_SAVE_GENERATE_DISCARD_URL, BAIBAOKU_SAVE_GENERATE_URL, BAIBAOKU_STATUS_URL, LOG_PREFIX, SAVE_GENERATE_BACKEND_CHECK_TIMEOUT_MS, SAVE_GENERATE_BACKEND_CHECK_TTL_MS, SAVE_GENERATE_BACKEND_MISSING_RECHECK_MS, SAVE_GENERATE_DISPLAY_CLASS, SAVE_GENERATE_DISPLAY_STYLE_ID, SAVE_GENERATE_FETCH_KEY, SAVE_GENERATE_JOB_ID_HEADER, SAVE_GENERATE_LOCAL_REQUEST_GUARD_RELEASE_DELAY_MS, SAVE_GENERATE_PATH, SAVE_GENERATE_POLL_INTERVAL_MS, SAVE_GENERATE_POLL_TIMEOUT_MS, SAVE_GENERATE_RECOVERY_BLOCK_SELECTOR, SAVE_GENERATE_RECOVERY_BLOCK_TOAST_INTERVAL_MS, SAVE_GENERATE_RECOVERY_CHAT_READY_INTERVAL_MS, SAVE_GENERATE_RECOVERY_CHAT_READY_TIMEOUT_MS, SAVE_GENERATE_RESUME_CHECK_COOLDOWN_MS, SAVE_GENERATE_RESUME_CHECK_DELAY_MS, SAVE_GENERATE_SAVE_PATH, SAVE_GENERATE_SEEN_STORAGE_PREFIX, SAVE_GENERATE_STATUS_HEADER } from './constants.js';
 import { buildFetchHeaders, copyFetchRequestOptions, getFetchRequestMethod, getFetchRequestUrl } from './gzipHook.js';
 import { settings } from './state.js';
+import { getCompleteResponseToolName, getGenerationRequestId, markGenerationRequest } from './generateRequest.js';
 import { readFetchJsonBody } from './util.js';
 
 function installSaveGenerateFetchHook() {
@@ -36,10 +37,6 @@ function installSaveGenerateFetchHook() {
             existing.localRequestGuards = new Map();
         }
         existing.localRequestGuardSerial = Number(existing.localRequestGuardSerial || 0);
-        if (!Array.isArray(existing.saveGenerateIntents)) {
-            existing.saveGenerateIntents = [];
-        }
-        existing.saveGenerateIntentSerial = Number(existing.saveGenerateIntentSerial || 0);
         existing.backendAvailable = existing.backendAvailable === true ? true : existing.backendAvailable === false ? false : null;
         existing.backendCheckedAt = Number(existing.backendCheckedAt || 0);
         existing.backendCheckPromise = null;
@@ -80,8 +77,7 @@ function installSaveGenerateFetchHook() {
         localTerminalWatchJobIds: new Set(),
         localRequestGuards: new Map(),
         localRequestGuardSerial: 0,
-        saveGenerateIntents: [],
-        saveGenerateIntentSerial: 0,
+        saveGenerateIntent: null,
         backendAvailable: null,
         backendCheckedAt: 0,
         backendCheckPromise: null,
@@ -101,6 +97,7 @@ function installSaveGenerateFetchHook() {
 
     state.wrappedFetch = async function baiBaiToolkitSaveGenerateFetch(input, init) {
         let localRequestGuard = null;
+        let generationDispatched = false;
         try {
             const skippedSaveResponse = await maybeHandleSaveGenerateSaveRequest(state, input, init);
             if (skippedSaveResponse) {
@@ -108,6 +105,7 @@ function installSaveGenerateFetchHook() {
             }
 
             if (!state.isEnabled()) {
+                clearSaveGenerateIntent(state);
                 return state.originalFetch(input, init);
             }
 
@@ -119,7 +117,13 @@ function installSaveGenerateFetchHook() {
             localRequestGuard = markSaveGenerateLocalRequestGuard(state, requestInfo.save?.chatId);
 
             if (!await isSaveGenerateBackendAvailable(state)) {
-                console.debug(`${LOG_PREFIX} save-generate skipped: BaiBaoKu backend is unavailable`);
+                generationDispatched = true;
+                const response = await state.originalFetch(input, init);
+                return guardSaveGenerateResponseUntilBodyDone(state, localRequestGuard, response);
+            }
+
+            if (getCompleteResponseToolName(requestInfo.body) && state.backendSupportsCompleteResponseTool !== true) {
+                generationDispatched = true;
                 const response = await state.originalFetch(input, init);
                 return guardSaveGenerateResponseUntilBodyDone(state, localRequestGuard, response);
             }
@@ -129,10 +133,17 @@ function installSaveGenerateFetchHook() {
                 return guardSaveGenerateResponseUntilBodyDone(state, localRequestGuard, recoveryBlockResponse);
             }
 
+            generationDispatched = true;
             const response = await fetchSaveGenerate(state, requestInfo, input, init);
             return guardSaveGenerateResponseUntilBodyDone(state, localRequestGuard, response);
         } catch (error) {
-            console.debug(`${LOG_PREFIX} save-generate path failed; falling back to native fetch`, error);
+            // A lost response does not mean the backend job stopped. Never create
+            // a duplicate generation; only pre-dispatch failures may fall back.
+            if (generationDispatched) {
+                clearSaveGenerateLocalRequestGuard(state, localRequestGuard);
+                throw error;
+            }
+            console.warn(`${LOG_PREFIX} [后台接管] save-generate path failed; falling back to native fetch`, error);
             try {
                 const response = await state.originalFetch(input, init);
                 return guardSaveGenerateResponseUntilBodyDone(state, localRequestGuard, response);
@@ -152,7 +163,6 @@ function installSaveGenerateFetchHook() {
     installSaveGenerateResumeHandlers(state);
     installSaveGenerateMessageDeleteHandler(state);
     queueSaveGenerateResumeCheck(state, 'install', 500);
-    console.debug(`${LOG_PREFIX} save-generate fetch hook installed`);
     return state;
 }
 
@@ -166,7 +176,9 @@ async function isSaveGenerateBackendAvailable(state) {
     const ttl = state.backendAvailable === false
         ? SAVE_GENERATE_BACKEND_MISSING_RECHECK_MS
         : SAVE_GENERATE_BACKEND_CHECK_TTL_MS;
-    if (typeof state.backendAvailable === 'boolean' && now - checkedAt < ttl) {
+    // An availability-only cache entry cannot answer whether tool replies are supported.
+    if (typeof state.backendAvailable === 'boolean' && now - checkedAt < ttl
+        && (state.backendAvailable === false || typeof state.backendSupportsCompleteResponseTool === 'boolean')) {
         return state.backendAvailable;
     }
 
@@ -174,16 +186,10 @@ async function isSaveGenerateBackendAvailable(state) {
         return state.backendCheckPromise;
     }
 
-    state.backendCheckPromise = checkSaveGenerateBackendAvailable(state.originalFetch)
-        .then(available => {
-            state.backendAvailable = available;
-            state.backendCheckedAt = Date.now();
-            return available;
-        })
+    state.backendCheckPromise = checkSaveGenerateBackendAvailable(state.originalFetch, state)
         .catch(error => {
             console.debug(`${LOG_PREFIX} save-generate backend check failed`, error);
-            state.backendAvailable = false;
-            state.backendCheckedAt = Date.now();
+            markSaveGenerateBackendAvailable(state, false);
             return false;
         })
         .finally(() => {
@@ -193,7 +199,7 @@ async function isSaveGenerateBackendAvailable(state) {
     return state.backendCheckPromise;
 }
 
-async function checkSaveGenerateBackendAvailable(fetchFn) {
+async function checkSaveGenerateBackendAvailable(fetchFn, state) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), SAVE_GENERATE_BACKEND_CHECK_TIMEOUT_MS);
 
@@ -204,19 +210,25 @@ async function checkSaveGenerateBackendAvailable(fetchFn) {
             signal: controller.signal,
         });
         const payload = await response.json().catch(() => null);
-        return Boolean(response.ok && payload?.ok === true && payload?.data?.installed === true);
+        const available = Boolean(response.ok && payload?.ok === true && payload?.data?.installed === true);
+        markSaveGenerateBackendAvailable(state, available, payload?.data);
+        return available;
     } finally {
         clearTimeout(timer);
     }
 }
 
-function markSaveGenerateBackendAvailable(state, available) {
+function markSaveGenerateBackendAvailable(state, available, status) {
     if (!state) {
         return;
     }
 
     state.backendAvailable = Boolean(available);
     state.backendCheckedAt = Date.now();
+    // Both status consumers publish capabilities here; generation responses only refresh availability.
+    if (!available || status !== undefined) {
+        state.backendSupportsCompleteResponseTool = Boolean(available && status?.capabilities?.saveGenerateCompleteResponseTool === true);
+    }
 }
 
 async function getSaveGenerateRequestInfo(state, input, init) {
@@ -236,52 +248,37 @@ async function getSaveGenerateRequestInfo(state, input, init) {
         return null;
     }
 
-    const skip = (reason, detail = '') => {
-        console.debug(`${LOG_PREFIX} save-generate skipped: ${reason}${detail ? ` (${detail})` : ''}`);
-        return null;
-    };
+    const body = await readFetchJsonBody(input, init);
+    const save = getCurrentSaveGenerateDescriptor(body);
+    // Claim the identified dispatch even if eligibility requires native fallback.
+    // Unrelated requests do not consume the pending main generation.
+    const intent = consumeSaveGenerateIntentForRequest(state, save, body);
 
     if (selected_group) {
-        return skip('group chat is not supported');
+        return null;
     }
 
     if (scriptModule.main_api !== 'openai') {
-        return skip('main_api is not chat-completions', String(scriptModule.main_api || 'unknown'));
+        return null;
     }
 
     if (settings.saveGenerateEnabled !== true) {
-        return skip('setting disabled');
+        return null;
     }
 
-    const body = await readFetchJsonBody(input, init);
     if (!isEligibleSaveGenerateBody(body)) {
-        return skip('request body is not eligible', describeSaveGenerateBody(body));
+        return null;
     }
 
-    const save = getCurrentSaveGenerateDescriptor(body);
     if (!save) {
-        return skip('current chat identity is unavailable');
+        return null;
     }
 
-    const intent = consumeSaveGenerateIntentForRequest(state, save, body);
     if (!intent) {
-        return skip('no matching main chat generation intent');
+        return null;
     }
 
     return { body, save, intent };
-}
-
-function describeSaveGenerateBody(body) {
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        return typeof body;
-    }
-
-    return [
-        `type=${String(body.type || 'normal')}`,
-        `n=${String(body.n || 1)}`,
-        `source=${String(body.chat_completion_source || '')}`,
-        `tools=${Array.isArray(body.tools) ? body.tools.length : 0}`,
-    ].join(' ');
 }
 
 function isEligibleSaveGenerateBody(body) {
@@ -297,7 +294,7 @@ function isEligibleSaveGenerateBody(body) {
         return false;
     }
 
-    if (Array.isArray(body.tools) && body.tools.length > 0) {
+    if (Array.isArray(body.tools) && body.tools.length > 0 && !getCompleteResponseToolName(body)) {
         return false;
     }
 
@@ -322,41 +319,27 @@ function installSaveGenerateIntentHandlers(state) {
             bindSaveGenerateIntentToRequestBody(state, body);
         });
     }
+
+    for (const event of [event_types.GENERATION_ENDED, event_types.GENERATION_STOPPED, event_types.CHAT_CHANGED]) {
+        if (event) eventSource.on(event, () => clearSaveGenerateIntent(state));
+    }
+}
+
+function clearSaveGenerateIntent(state) {
+    state.saveGenerateIntent = null;
 }
 
 function recordSaveGenerateIntentFromGenerationEvent(state, type, options = {}, dryRun = false) {
-    cleanupSaveGenerateIntents(state);
-
-    if (settings.saveGenerateEnabled !== true || selected_group || dryRun) {
-        return;
-    }
-
+    // Token-count dry runs may overlap real generation; leave its intent untouched.
+    if (dryRun) return;
+    clearSaveGenerateIntent(state);
+    if (settings.saveGenerateEnabled !== true || selected_group) return;
     const normalizedType = String(type || 'normal');
-    if (!['normal', 'regenerate'].includes(normalizedType)) {
-        return;
-    }
-
-    if (!isSaveGenerateMainChatGenerationOptions(options)) {
-        return;
-    }
-
+    if (!['normal', 'regenerate'].includes(normalizedType)) return;
+    if (!isSaveGenerateMainChatGenerationOptions(options)) return;
     const save = getCurrentSaveGenerateDescriptor({ type: normalizedType });
-    if (!save) {
-        return;
-    }
-
-    state.saveGenerateIntentSerial = Number(state.saveGenerateIntentSerial || 0) + 1;
-    state.saveGenerateIntents.push({
-        id: state.saveGenerateIntentSerial,
-        type: normalizedType,
-        chatId: save.chatId,
-        createdAt: Date.now(),
-        preparedAt: 0,
-        expectedBody: null,
-        expectedBodyHash: '',
-        lastMessageHashAtStart: getCurrentSaveGenerateLastMessageHash(),
-    });
-    cleanupSaveGenerateIntents(state);
+    if (!save) return;
+    state.saveGenerateIntent = { type: normalizedType, chatId: save.chatId, requestId: '' };
 }
 
 function isSaveGenerateMainChatGenerationOptions(options) {
@@ -376,85 +359,27 @@ function isSaveGenerateMainChatGenerationOptions(options) {
 }
 
 function bindSaveGenerateIntentToRequestBody(state, body) {
-    cleanupSaveGenerateIntents(state);
-
-    if (settings.saveGenerateEnabled !== true || selected_group || !isEligibleSaveGenerateBody(body)) {
-        return;
-    }
-
+    const intent = state?.saveGenerateIntent;
+    if (!intent || settings.saveGenerateEnabled !== true || selected_group) return;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return;
     const type = String(body.type || 'normal');
-    const chatId = getCurrentSaveGenerateChatId();
-    if (!chatId) {
-        return;
-    }
-
-    const intents = Array.isArray(state?.saveGenerateIntents) ? state.saveGenerateIntents : [];
-    const intent = [...intents].reverse().find(item => {
-        return item
-            && !item.expectedBody
-            && item.type === type
-            && item.chatId === chatId;
-    });
-
-    if (!intent) {
-        return;
-    }
-
-    intent.expectedBody = body;
-    intent.preparedAt = Date.now();
+    if (intent.type !== type || intent.chatId !== getCurrentSaveGenerateChatId()) return;
+    // ponytail: bind identity now, check tool/source/n eligibility only at fetch.
+    // Preset listeners and fetch hooks have not finished rewriting those fields.
+    // The retry hook normally marks first; reuse its identity.
+    intent.requestId = markGenerationRequest(body);
 }
 
 function consumeSaveGenerateIntentForRequest(state, save, body) {
-    cleanupSaveGenerateIntents(state);
-
-    const chatId = String(save?.chatId || '').trim();
-    const type = String(save?.type || body?.type || 'normal');
-    if (!chatId || !isCurrentSaveGenerateChatTailReadyForAssistantReply()) {
-        return null;
-    }
-
-    const bodyHash = makeSaveGenerateRequestBodyHash(body);
-    const now = Date.now();
-    const intents = Array.isArray(state?.saveGenerateIntents) ? state.saveGenerateIntents : [];
-    const intent = intents.find(item => {
-        if (!item || item.chatId !== chatId || item.type !== type || !item.expectedBody) {
-            return false;
-        }
-        if (now - Number(item.preparedAt || item.createdAt || 0) > SAVE_GENERATE_INTENT_TTL_MS) {
-            return false;
-        }
-
-        const expectedHash = item.expectedBodyHash || makeSaveGenerateRequestBodyHash(item.expectedBody);
-        item.expectedBodyHash = expectedHash;
-        return expectedHash === bodyHash;
-    });
-
-    if (!intent) {
-        return null;
-    }
-
+    const intent = state?.saveGenerateIntent;
+    if (!intent?.requestId || getGenerationRequestId(body) !== intent.requestId) return null;
+    // One dispatch only, including a native fallback. Do not leave an old
+    // generation claim available to a later request with copied parameters.
+    clearSaveGenerateIntent(state);
+    if (intent.chatId !== String(save?.chatId || '').trim()) return null;
+    if (intent.type !== String(save?.type || body?.type || 'normal')) return null;
+    if (!isCurrentSaveGenerateChatTailReadyForAssistantReply()) return null;
     return intent;
-}
-
-function cleanupSaveGenerateIntents(state) {
-    if (!state) {
-        return;
-    }
-
-    if (!Array.isArray(state.saveGenerateIntents)) {
-        state.saveGenerateIntents = [];
-        return;
-    }
-
-    const now = Date.now();
-    state.saveGenerateIntents = state.saveGenerateIntents.filter(intent => {
-        return intent
-            && now - Number(intent.createdAt || 0) <= SAVE_GENERATE_INTENT_TTL_MS;
-    });
-
-    if (state.saveGenerateIntents.length > SAVE_GENERATE_MAX_INTENTS) {
-        state.saveGenerateIntents = state.saveGenerateIntents.slice(-SAVE_GENERATE_MAX_INTENTS);
-    }
 }
 
 function isCurrentSaveGenerateChatTailReadyForAssistantReply() {
@@ -481,39 +406,6 @@ function getCurrentSaveGenerateChatTailMessage() {
     }
 
     return lastMessage ? { message: lastMessage, floor: lastFloor } : null;
-}
-
-function makeSaveGenerateRequestBodyHash(body) {
-    const text = stringifySaveGenerateStableJson(body);
-    let hash = 0x811c9dc5;
-    for (let index = 0; index < text.length; index += 1) {
-        hash ^= text.charCodeAt(index);
-        hash = Math.imul(hash, 0x01000193);
-    }
-    return `r${text.length.toString(36)}:${(hash >>> 0).toString(16).padStart(8, '0')}`;
-}
-
-function stringifySaveGenerateStableJson(value) {
-    return JSON.stringify(normalizeSaveGenerateStableJson(value));
-}
-
-function normalizeSaveGenerateStableJson(value) {
-    if (!value || typeof value !== 'object') {
-        return value;
-    }
-
-    if (Array.isArray(value)) {
-        return value.map(item => normalizeSaveGenerateStableJson(item));
-    }
-
-    const output = {};
-    for (const key of Object.keys(value).sort()) {
-        const normalized = normalizeSaveGenerateStableJson(value[key]);
-        if (normalized !== undefined) {
-            output[key] = normalized;
-        }
-    }
-    return output;
 }
 
 function getCurrentSaveGenerateDescriptor(body = null) {
@@ -596,8 +488,6 @@ async function fetchSaveGenerate(state, requestInfo, input, init) {
 
     const activeChatId = String(requestInfo.save?.chatId || '').trim();
     const isStream = requestInfo.body?.stream === true;
-    const currentTail = getCurrentSaveGenerateChatTailMessage();
-    console.log(`${LOG_PREFIX} [楼层日志] 发送生成请求 type=${requestInfo.save?.type} chatId=${activeChatId} 当前末尾楼层=${currentTail?.floor ?? -1} 期望楼层=${requestInfo.save?.expectedFloor}`);
     const cancelTarget = setActiveSaveGenerateCancelTarget(state, {
         jobId: '',
         chatId: activeChatId,
@@ -609,7 +499,7 @@ async function fetchSaveGenerate(state, requestInfo, input, init) {
         if (response?.status === 404) {
             markSaveGenerateBackendAvailable(state, false);
             clearActiveSaveGenerateCancelTarget(state, cancelTarget);
-            console.debug(`${LOG_PREFIX} save-generate endpoint unavailable; falling back to native generate`);
+            console.warn(`${LOG_PREFIX} [后台接管] save-generate endpoint unavailable; falling back to native generate`);
             return state.originalFetch(input, init);
         }
         markSaveGenerateBackendAvailable(state, response?.ok || response?.status !== 404);
@@ -619,7 +509,6 @@ async function fetchSaveGenerate(state, requestInfo, input, init) {
             cancelTarget.jobId = jobId;
         }
         if (jobId && response.ok) {
-            console.debug(`${LOG_PREFIX} save-generate intercepted ${requestInfo.save.file_name}; job=${jobId}`);
             rememberSaveGenerateJob(state, {
                 id: jobId,
                 save: requestInfo.save,
@@ -948,14 +837,12 @@ async function maybeHandleSaveGenerateSaveRequest(state, input, init) {
     });
 
     if (job && isSaveGenerateChatAlreadySavedStatus(job)) {
-        console.debug(`${LOG_PREFIX} save-generate saved ${record.save.file_name}; skipping native /api/chats/save`);
         record.consumed = true;
         markSaveGenerateJobSeen(job);
         cleanupSaveGenerateRecords(state);
         return buildSkippedSaveGenerateSaveResponse(job);
     }
 
-    console.debug(`${LOG_PREFIX} save-generate did not save ${record.save.file_name}; native /api/chats/save will run`, job);
     return fetchNativeSaveForSaveGenerateRecord(state, input, init, record, job);
 }
 
@@ -1328,36 +1215,8 @@ function installSaveGenerateMessageDeleteHandler(state) {
     }
 
     state.messageDeleteHandlerInstalled = true;
-    eventSource.on(event_types.MESSAGE_DELETED, () => {
-        const cleanup = {
-            chatId: getCurrentSaveGenerateChatId(),
-            promise: discardCurrentChatSaveGenerateJobsAfterMessageDelete(state),
-        };
-        state.messageDeleteCleanup = cleanup;
-        return cleanup.promise;
-    });
-}
-
-async function waitForSaveGenerateMessageDelete(chatId) {
-    const state = globalThis[SAVE_GENERATE_FETCH_KEY];
-    if (!state || state.backendAvailable !== true) {
-        return;
-    }
-
-    const cleanup = state.messageDeleteCleanup;
-    if (!cleanup || cleanup.chatId !== chatId || await cleanup.promise !== true) {
-        throw new Error('Background generation cleanup failed');
-    }
-}
-
-async function discardSaveGenerateJobsBeforeRetry(chatId) {
-    const state = globalThis[SAVE_GENERATE_FETCH_KEY];
-    if (!state || state.backendAvailable !== true) {
-        return;
-    }
-    if (chatId !== getCurrentSaveGenerateChatId() || await discardCurrentChatSaveGenerateJobsAfterMessageDelete(state) !== true) {
-        throw new Error('Background generation cleanup failed');
-    }
+    // Native regenerate awaits MESSAGE_DELETED before issuing the next generation.
+    eventSource.on(event_types.MESSAGE_DELETED, () => discardCurrentChatSaveGenerateJobsAfterMessageDelete(state));
 }
 
 async function discardCurrentChatSaveGenerateJobsAfterMessageDelete(state) {
@@ -1371,13 +1230,12 @@ async function discardCurrentChatSaveGenerateJobsAfterMessageDelete(state) {
     }
 
     try {
-        const result = await discardSaveGenerateJobsForChat(state.originalFetch, chatId);
+        await discardSaveGenerateJobsForChat(state.originalFetch, chatId);
         markSaveGenerateLocalChatJobsConsumed(state, chatId);
         clearActiveSaveGenerateCancelTarget(state, { chatId });
         clearSaveGenerateRecoveryLock(state, chatId);
         state.lastResumeCheckChatId = chatId;
         state.lastResumeCheckAt = Date.now();
-        console.debug(`${LOG_PREFIX} save-generate discarded jobs after message delete`, result);
         return true;
     } catch (error) {
         console.debug(`${LOG_PREFIX} save-generate discard after message delete failed`, error);
@@ -1480,30 +1338,25 @@ async function runCurrentSaveGenerateJobCheck(state, chatId, reason = 'unknown',
     }
 
     if (isSaveGenerateActiveLocalChat(state, chatId)) {
-        console.debug(`${LOG_PREFIX} save-generate resume check skipped: current page is generating this chat (${reason})`);
         return null;
     }
 
     if (scriptModule.is_send_press) {
-        console.debug(`${LOG_PREFIX} save-generate resume check skipped: SillyTavern generation is still active (${reason})`);
         return null;
     }
 
     if (reason !== 'generate-fetch' && isSaveGenerateLocalRequestGuarded(state, chatId)) {
-        console.debug(`${LOG_PREFIX} save-generate resume check skipped: local generate request is pending (${reason})`);
         return null;
     }
 
     const now = Date.now();
     if (!force && state.lastResumeCheckChatId === chatId && now - Number(state.lastResumeCheckAt || 0) < SAVE_GENERATE_RESUME_CHECK_COOLDOWN_MS) {
-        console.debug(`${LOG_PREFIX} save-generate resume check skipped: same chat cooldown (${reason})`);
         return null;
     }
 
     state.resumeCheckInFlightChatId = chatId;
     try {
         if (!await isSaveGenerateBackendAvailable(state)) {
-            console.debug(`${LOG_PREFIX} save-generate resume check skipped: BaiBaoKu backend is unavailable (${reason})`);
             return null;
         }
 
@@ -1518,8 +1371,6 @@ async function runCurrentSaveGenerateJobCheck(state, chatId, reason = 'unknown',
             console.debug(`${LOG_PREFIX} save-generate resume check failed`, error);
             return null;
         });
-
-        console.log(`${LOG_PREFIX} [楼层日志] resume检查(${reason}) 上报末尾楼层=${resumeLastMessageInfo.floor} role=${resumeLastMessageInfo.role} → 后端${job?.id ? `返回job=${job.id} status=${job.status} 期望楼层=${job.save?.expectedFloor}` : '未返回job(已被后端拦截或无job)'}`);
 
         state.lastResumeCheckChatId = chatId;
         state.lastResumeCheckAt = Date.now();
@@ -1538,7 +1389,6 @@ async function runCurrentSaveGenerateJobCheck(state, chatId, reason = 'unknown',
             if (isSaveGenerateTerminalStatus(status) && status !== 'completed') {
                 markSaveGenerateLocalJobConsumed(state, job.id);
                 markSaveGenerateJobSeen(job);
-                console.debug(`${LOG_PREFIX} save-generate resume check skipped: job is owned by current page job=${job.id} (${reason})`);
                 return job;
             }
 
@@ -1547,11 +1397,9 @@ async function runCurrentSaveGenerateJobCheck(state, chatId, reason = 'unknown',
             // duplicate the reply ST is about to (or already did) save. If the page
             // somehow never saves it, the local record ages out and a later resume
             // check recovers it as a foreign job — so nothing is lost by skipping now.
-            console.debug(`${LOG_PREFIX} save-generate resume check skipped: job is owned by current page job=${job.id} status=${status} (${reason})`);
             return job;
         }
 
-        console.debug(`${LOG_PREFIX} save-generate resume check found job=${job.id} status=${job.status} reason=${reason}`);
         handleSaveGenerateJobForCurrentChat(state, job, chatId, reason);
         return job;
     } finally {
@@ -1612,7 +1460,6 @@ async function maybeBlockSaveGenerateRequestForRecovery(state, requestInfo) {
         return null;
     }
 
-    console.debug(`${LOG_PREFIX} save-generate blocked native generate while recovering job=${lock.jobId || ''}`);
     showSaveGenerateRecoveryBlockToast(state);
     return buildSaveGenerateRecoveryBlockedResponse(lock);
 }
@@ -2316,7 +2163,6 @@ async function maybeRecoverCurrentChatForSaveGenerateJob(job, chatId, reason = '
     }
 
     markSaveGenerateJobSeen(job);
-    console.debug(`${LOG_PREFIX} save-generate saved non-normal job while page was away; reloading chat job=${job.id} reason=${reason}`);
     await reloadCurrentChat().catch(error => {
         console.debug(`${LOG_PREFIX} save-generate chat reload failed`, error);
     });
@@ -2352,7 +2198,6 @@ async function insertSaveGenerateJobWithSendAs(job, chatId, reason = 'unknown') 
     const text = String(job.savedMessage?.mes ?? job.resultText ?? '');
     if (!text) {
         markSaveGenerateJobSeen(job);
-        console.debug(`${LOG_PREFIX} save-generate saved empty job; reloading chat job=${job.id} reason=${reason}`);
         await reloadCurrentChat().catch(error => {
             console.debug(`${LOG_PREFIX} save-generate chat reload failed`, error);
         });
@@ -2367,7 +2212,6 @@ async function insertSaveGenerateJobWithSendAs(job, chatId, reason = 'unknown') 
     const name = String(job.savedMessage?.name || characters?.[this_chid]?.name || job.save?.ch_name || scriptModule.name2 || '').trim();
     if (!name) {
         markSaveGenerateJobSeen(job);
-        console.debug(`${LOG_PREFIX} save-generate could not resolve character name; reloading chat job=${job.id} reason=${reason}`);
         await reloadCurrentChat().catch(error => {
             console.debug(`${LOG_PREFIX} save-generate chat reload failed`, error);
         });
@@ -2375,7 +2219,6 @@ async function insertSaveGenerateJobWithSendAs(job, chatId, reason = 'unknown') 
     }
 
     try {
-        console.debug(`${LOG_PREFIX} save-generate saved while page was away; inserting with sendas job=${job.id} reason=${reason}`);
         await sendMessageAs({ name, return: 'none' }, text);
         markSaveGenerateJobSeen(job);
     } catch (error) {
@@ -2398,15 +2241,12 @@ async function insertSaveGenerateJobWithSendAs(job, chatId, reason = 'unknown') 
 function isSaveGenerateExpectedFloorInsertable(job) {
     const expectedFloor = Number.isInteger(job?.save?.expectedFloor) ? job.save.expectedFloor : -1;
     if (expectedFloor < 0) {
-        console.log(`${LOG_PREFIX} [楼层日志] 恢复判定 job=${job?.id} 期望楼层=缺失(旧job) → 回退旧逻辑`);
         return null;
     }
 
     const tail = getCurrentSaveGenerateChatTailMessage();
     const tailFloor = tail && Number.isInteger(tail.floor) ? tail.floor : -1;
-    const insertable = tailFloor + 1 === expectedFloor;
-    console.log(`${LOG_PREFIX} [楼层日志] 恢复判定 job=${job?.id} 当前末尾楼层=${tailFloor} 期望楼层=${expectedFloor} 末尾+1=${tailFloor + 1} → ${insertable ? '一致,允许插入(恢复)' : '不一致,不插入(挡重复)'}`);
-    return insertable;
+    return tailFloor + 1 === expectedFloor;
 }
 
 function isCurrentSaveGenerateMessageAlreadyInserted(job) {
@@ -2523,7 +2363,6 @@ export {
     cancelSaveGenerateJobWithRetry,
     checkCurrentSaveGenerateJob,
     checkSaveGenerateBackendAvailable,
-    cleanupSaveGenerateIntents,
     cleanupSaveGenerateRecords,
     clearActiveSaveGenerateCancelTarget,
     clearSaveGenerateLocalRequestGuard,
@@ -2531,9 +2370,7 @@ export {
     computeSaveGenerateExpectedFloor,
     consumeSaveGenerateIntentForRequest,
     delaySaveGeneratePoll,
-    describeSaveGenerateBody,
     discardCurrentChatSaveGenerateJobsAfterMessageDelete,
-    discardSaveGenerateJobsBeforeRetry,
     discardSaveGenerateJobsForChat,
     fetchNativeSaveForSaveGenerateRecord,
     fetchSaveGenerate,
@@ -2585,7 +2422,6 @@ export {
     isSaveGenerateTerminalStatus,
     isSaveGenerateTextIncludedInMessage,
     makeSaveGenerateMessageContentHash,
-    makeSaveGenerateRequestBodyHash,
     markSaveGenerateActiveChat,
     markSaveGenerateBackendAvailable,
     markSaveGenerateDisplayElement,
@@ -2598,7 +2434,6 @@ export {
     maybeRecoverCurrentChatForSaveGenerateJob,
     monitorSaveGenerateJob,
     normalizeSaveGenerateComparableText,
-    normalizeSaveGenerateStableJson,
     parseSaveGenerateEventStreamBlock,
     queueSaveGenerateResumeCheck,
     recordSaveGenerateIntentFromGenerationEvent,
@@ -2613,11 +2448,9 @@ export {
     showSaveGenerateInfoToast,
     showSaveGenerateRecoveryBlockToast,
     stopSaveGenerateResumeJob,
-    stringifySaveGenerateStableJson,
     updateSaveGenerateResumeDisplay,
     waitForSaveGenerateCurrentChatReady,
     waitForSaveGenerateRecoveryGate,
-    waitForSaveGenerateMessageDelete,
     waitSaveGenerateJobTerminal,
     waitSaveGenerateJobTerminalEventStream,
     waitSaveGenerateJobTerminalPolling,

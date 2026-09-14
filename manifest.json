@@ -3,9 +3,9 @@
     "loading_order": -1000,
     "requires": [],
     "optional": [],
-    "js": "dist/index.js?ver=0.30.2",
+    "js": "dist/index.js?ver=0.30.13",
     "author": "柏柏",
-    "version": "0.30.2",
+    "version": "0.30.13",
     "homePage": "",
     "auto_update": false
 }
