@@ -8,6 +8,7 @@ import { loadDescriptionCodeMirrorModules } from './features/descEditor.js';
 import { disableFastCharacterListFetchHook, disableFastSettingsBootstrapFetchHook } from './features/fastBootstrap.js';
 import { installGenerateBlacklistRetry } from './features/generateBlacklistRetry.js';
 import { installGenerateRetryFetchHook } from './features/generateRetry.js';
+import { installGenerationLifecycle } from './features/generationLifecycle.js';
 import { installPageRestoreSelectionGuard } from './features/globalGuards.js';
 import { installSaveRequestGzipFetchHook } from './features/gzipHook.js';
 import { installPerformanceTraceFetchHook, recordPerformanceTraceLongDomRefresh } from './features/perfTrace.js';
@@ -58,6 +59,8 @@ disableFastSettingsBootstrapFetchHook();
 disableFastCharacterListFetchHook();
 installSaveRequestGzipFetchHook();
 installPerformanceTraceFetchHook();
+// 先生命周期、后重试:停止信号要先于重试模块的监听器更新。
+installGenerationLifecycle();
 // 必须先于 save-generate 安装:重试要包在里层,这样它看到的是 save-generate 真正发出去的
 // 那一次请求(接管时是 save-generate 地址,退回时是原生地址),重发不会重跑接管判定。
 installGenerateRetryFetchHook();

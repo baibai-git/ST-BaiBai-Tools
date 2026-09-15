@@ -202,10 +202,17 @@ async function harness(options = {}) {
             return { ok: true, status: 200 };
         },
     });
+    const lifecycle = await loadModule('generationLifecycle.js', context, {
+        '@sillytavern/script': script,
+        './constants.js': constants,
+        './state.js': { settings, extensionState },
+    });
+    lifecycle.exports.installGenerationLifecycle();
     const retry = await loadModule('generateRetry.js', context, {
         '@sillytavern/script': script,
         './generateRequest.js': generateRequest,
         './constants.js': constants,
+        './generationLifecycle.js': lifecycle.exports,
         './state.js': { settings, extensionState },
         './gzipHook.js': {
             getFetchRequestMethod: (input, init) => init?.method || 'GET',
@@ -224,6 +231,7 @@ async function harness(options = {}) {
         './constants.js': constants,
         './state.js': { settings, extensionState },
         './generateRetry.js': retry.exports,
+        './generationLifecycle.js': lifecycle.exports,
     });
     scriptModules.push(feature.dependencies.get('@sillytavern/script'));
     const sound = await loadModule('../chat/completionSound.js', context, {
@@ -308,6 +316,47 @@ test('literal lines: Chinese, case folding, CRLF, blank lines and regex characte
     assert.equal(h.feature.findGenerateBlacklistMatch('i cannot help', entries), 'I CANNOT');
     assert.equal(h.feature.findGenerateBlacklistMatch('normal text', entries), '');
     assert.equal(h.feature.findGenerateBlacklistMatch('literal .* pattern', entries), '.*');
+});
+
+test('regex lines support flags and stay opt-in per line', async () => {
+    const h = await harness();
+    const entries = h.feature.parseGenerateBlacklist(
+        '/blocked/\n/blocked/i\n/a.b/s\n/^Error:/m\n/(retry)/\n/timeout|504/i\n抱歉');
+    // 不加 i 的正则区分大小写；普通行仍然忽略大小写。
+    assert.equal(h.feature.findGenerateBlacklistMatch('BLOCKED', entries), '/blocked/i');
+    assert.equal(h.feature.findGenerateBlacklistMatch('blocked', entries), '/blocked/');
+    assert.equal(h.feature.findGenerateBlacklistMatch('非常抱歉', entries), '抱歉');
+    // s 让 . 匹配换行，m 让 ^ 匹配行首，括号按正则分组解释。
+    assert.equal(h.feature.findGenerateBlacklistMatch('a\nb', entries), '/a.b/s');
+    assert.equal(h.feature.findGenerateBlacklistMatch('note\nError: 503', entries), '/^Error:/m');
+    assert.equal(h.feature.findGenerateBlacklistMatch('please (retry)', entries), '/(retry)/');
+    assert.equal(h.feature.findGenerateBlacklistMatch('HTTP 504 Bad Gateway', entries), '/timeout|504/i');
+    assert.equal(h.feature.findGenerateBlacklistMatch('nothing here', entries), '');
+});
+
+test('global and sticky regex entries keep matching across repeated checks', async () => {
+    const h = await harness();
+    const entries = h.feature.parseGenerateBlacklist('/503/g\n/blocked/y');
+    for (let round = 0; round < 3; round++) {
+        assert.equal(h.feature.findGenerateBlacklistMatch('HTTP 503', entries), '/503/g');
+        assert.equal(h.feature.findGenerateBlacklistMatch('blocked', entries), '/blocked/y');
+    }
+});
+
+test('lines that are not valid /pattern/flags stay literal and invalid regex warns once', async () => {
+    const h = await harness();
+    const entries = h.feature.parseGenerateBlacklist('http://example.com\n//\n/  /\n/foo(/i');
+    // // 不是空正则，而是普通文本，不会命中任意回复。
+    assert.equal(h.feature.findGenerateBlacklistMatch('anything', entries), '');
+    assert.equal(h.feature.findGenerateBlacklistMatch('a // b', entries), '//');
+    assert.equal(h.feature.findGenerateBlacklistMatch('visit http://example.com now', entries), 'http://example.com');
+    assert.equal(h.feature.findGenerateBlacklistMatch('literal /foo(/i text', entries), '/foo(/i');
+    assert.equal(h.feature.findGenerateBlacklistMatch('foo( text', entries), '');
+    assert.equal(h.logEntries.length, 1, 'invalid regex must warn only once');
+    assert.equal(h.logEntries[0].level, 'warn');
+    assert.ok(h.logEntries[0].args[0].includes('/foo(/i'));
+    assert.equal(h.feature.findGenerateBlacklistMatch('literal /foo(/i text', entries), '/foo(/i');
+    assert.equal(h.logEntries.length, 1, 'the warning must not repeat on later checks');
 });
 
 test('blacklist input follows the saved toggle and preserves its text when hidden', async () => {
@@ -481,6 +530,90 @@ for (const action of ['stop', 'switch-chat', 'disable', 'edit', 'append', 'new-g
         assert.equal(h.deletions.length, 0);
     });
 }
+
+test('request retry is not re-armed when a stop lands in the startup window', async () => {
+    const h = await harness({ settings: { generateBlacklistRetryEnabled: false }, apiResponses: [503, 503] });
+    let stopped = false;
+    h.eventSource.on(h.event_types.GENERATION_STARTED, async () => {
+        if (stopped) return;
+        stopped = true;
+        // 停止落在酒馆重建 abortController 之前:同一代会继续走到 AFTER_COMMANDS。
+        await h.eventSource.emit(h.event_types.GENERATION_STOPPED);
+    });
+    await h.begin();
+    const reply = h.requestReply().catch(error => `ERR: ${error.message}`);
+    await setImmediate();
+    await h.advance(10_000);
+    assert.equal(await reply, 'ERR: Generation failed: HTTP 503');
+    assert.equal(h.apiRequests.length, 1);
+    assert.deepEqual(h.notices, [], 'a stopped generation must not retry or toast');
+});
+
+test('generation stop cancels a pending request retry without a fetch signal', async () => {
+    const h = await harness({ settings: { generateBlacklistRetryEnabled: false }, apiResponses: [503, 503] });
+    await h.begin();
+    const reply = h.requestReply('normal', null).catch(error => `ERR: ${error.message}`);
+    await setImmediate();
+    assert.equal(h.apiRequests.length, 1);
+    await h.eventSource.emit(h.event_types.GENERATION_STOPPED);
+    await h.advance(10_000);
+    assert.equal(await reply, 'ERR: Generation failed: HTTP 503');
+    assert.equal(h.apiRequests.length, 1, 'the pending retry must be cancelled by the stop');
+    assert.equal(h.notices.length, 1, 'the pending retry notice is shown before the stop cancels it');
+});
+
+test('blacklist retry is not re-armed when a stop lands in the regenerated startup', async () => {
+    const h = await harness({ apiResponses: ['blocked', 'blocked again'] });
+    let stopped = false;
+    h.eventSource.on(h.event_types.GENERATION_STARTED, async (type, options) => {
+        if (stopped || type !== 'regenerate' || options?.automatic_trigger !== true) return;
+        stopped = true;
+        await h.eventSource.emit(h.event_types.GENERATION_STOPPED);
+    });
+    await h.begin();
+    await h.finish(await h.requestReply());
+    await h.advance(10_000);
+    assert.equal(h.calls.length, 1);
+    assert.equal(h.run, null);
+    assert.deepEqual(h.st.chat.map(message => message.mes), ['prompt', 'blocked again']);
+});
+
+test('stop swallowed before the regenerated STARTED keeps the shared retry budget', async () => {
+    const h = await harness({ settings: { generateRetryMaxRetries: 2 }, apiResponses: ['blocked', 'blocked again', 'accepted'] });
+    let swallowed = 0;
+    const originalGenerate = h.st.generate;
+    h.st.generate = async (type, args) => {
+        if (type === 'regenerate' && swallowed === 0) {
+            swallowed += 1;
+            // 停止早于这一代自己的 GENERATION_STARTED:酒馆随后照旧启动它。
+            await h.eventSource.emit(h.event_types.GENERATION_STOPPED);
+        }
+        return originalGenerate(type, args);
+    };
+    await h.begin();
+    const run = h.run;
+    await h.finish(await h.requestReply());
+    await h.advance(2000);
+    assert.equal(swallowed, 1);
+    assert.equal(h.calls.length, 1);
+    assert.equal(h.run, run, 'the swallowed stop must not drop the chain');
+    assert.equal(run.retries, 1);
+    await h.advance(10_000);
+    assert.equal(h.calls.length, 2);
+    assert.equal(run.retries, 2, 'the preserved budget must not reset to zero');
+    assert.deepEqual(h.st.chat.map(message => message.mes), ['prompt', 'accepted']);
+    assert.equal(h.run, null);
+});
+
+test('blacklist retry toasts use their own title', async () => {
+    const h = await harness({ settings: { generateRetryMaxRetries: 1 } });
+    await h.begin();
+    await h.finish('blocked');
+    await h.advance(2000);
+    const hit = h.notices.find(notice => String(notice.args[0]).includes('命中黑名单'));
+    assert.ok(hit);
+    assert.equal(hit.args[1], '黑名单命中自动重试');
+});
 
 test('aborted streaming output is not treated as a completed reply', async () => {
     const h = await harness();
@@ -1009,7 +1142,8 @@ async function saveGenerateHarness({ install = false, responses = [200], modernB
     });
     const constants = (await loadModule('constants.js', context, { '@sillytavern/script': script })).exports;
     const mocks = { './generateRequest.js': generateRequest, '@sillytavern/script': script, '@sillytavern/scripts/group-chats': { selected_group: null },
-        './state.js': { settings, extensionState: {} }, './constants.js': { ...constants, GENERATE_RETRY_BASE_DELAY_MS: 0 } };
+        './state.js': { settings, extensionState: {} }, './constants.js': { ...constants, GENERATE_RETRY_BASE_DELAY_MS: 0 },
+        './generationLifecycle.js': { isCurrentGenerationStopped: () => false, getGenerationStopEpoch: () => 0, subscribeGenerationStop: () => () => {} } };
     mocks['./gzipHook.js'] = (await loadModule('gzipHook.js', context, mocks)).exports;
     mocks['./util.js'] = (await loadModule('util.js', context, mocks)).exports;
     const { exports: feature, dependencies } = await loadModule('saveGenerate.js', context, mocks);

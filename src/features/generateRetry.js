@@ -3,8 +3,9 @@
 // Strip the local request marker here even when automatic retry is disabled.
 import { event_types, eventSource } from '@sillytavern/script';
 import { createGenerationRequestId, getGenerationRequestId, markGenerationRequest, stripGenerationRequestId } from './generateRequest.js';
-import { BAIBAOKU_SAVE_GENERATE_URL, GENERATE_RETRY_BASE_DELAY_MS, GENERATE_RETRY_DEFAULT_RETRIES, GENERATE_RETRY_FETCH_KEY, GENERATE_RETRY_MAX_DELAY_MS, GENERATE_RETRY_MAX_RETRIES, GENERATE_RETRY_MESSAGE_TYPES, GENERATE_RETRY_MIN_RETRIES, GENERATE_RETRY_PATHS, GENERATE_RETRY_PERMANENT_STATUSES, GENERATE_RETRY_REASON_MAX_LENGTH } from './constants.js';
+import { BAIBAOKU_SAVE_GENERATE_URL, GENERATE_RETRY_BASE_DELAY_MS, GENERATE_RETRY_DEFAULT_RETRIES, GENERATE_RETRY_FETCH_KEY, GENERATE_RETRY_MAX_DELAY_MS, GENERATE_RETRY_MAX_RETRIES, GENERATE_RETRY_MESSAGE_TYPES, GENERATE_RETRY_MIN_RETRIES, GENERATE_RETRY_PATHS, GENERATE_RETRY_PERMANENT_STATUSES, GENERATE_RETRY_REASON_MAX_LENGTH, LOG_PREFIX } from './constants.js';
 import { getFetchRequestMethod, getFetchRequestUrl, isFetchRequest } from './gzipHook.js';
+import { getGenerationStopEpoch, isCurrentGenerationStopped, subscribeGenerationStop } from './generationLifecycle.js';
 import { extensionState, settings } from './state.js';
 import { readFetchJsonBody } from './util.js';
 
@@ -95,7 +96,17 @@ function openGenerateRetryWindow(state, type, dryRun) {
     closeGenerateRetryWindow(state);
     const normalizedType = String(type || 'normal');
     if (!GENERATE_RETRY_MESSAGE_TYPES.has(normalizedType)) return;
-    state.nativeWindow = { type: normalizedType, requestId: createGenerationRequestId(), prepared: false };
+    // 停止落在酒馆重建 abortController 之前时,同一代仍会走到这里;不要重新武装。
+    if (isCurrentGenerationStopped()) {
+        console.debug(`${LOG_PREFIX} [请求重试] 启动窗口内已停止,本代不再武装重试`);
+        return;
+    }
+    state.nativeWindow = {
+        type: normalizedType,
+        requestId: createGenerationRequestId(),
+        prepared: false,
+        stopEpoch: getGenerationStopEpoch(),
+    };
 }
 
 function closeGenerateRetryWindow(state) {
@@ -119,11 +130,18 @@ function matchGenerateRetryRequest(state, body, kind, init) {
     closeGenerateRetryWindow(state);
     if (body?.type && body.type !== active.type) return null;
     if (!state.isEnabled()) return null;
+    // 武装之后、请求发出之前这一代又被停止(例如控制器已 abort):不再重试。
+    if (active.stopEpoch !== getGenerationStopEpoch()) return null;
     return {
         stream: body.stream === true || body.streaming === true,
         retryOnNetworkError: kind !== 'save-generate',
         signal: init?.signal instanceof AbortSignal ? init.signal : null,
+        stopEpoch: active.stopEpoch,
     };
+}
+
+function isGenerateRetryStopped(request) {
+    return request?.stopEpoch !== undefined && request.stopEpoch !== getGenerationStopEpoch();
 }
 
 function getGenerateRetryRequestKind(input, init) {
@@ -249,7 +267,8 @@ function consumeGenerateRetryAttempt(budget) {
 }
 
 async function waitBeforeGenerateRetry(state, request, budget, reason) {
-    if (!state.isEnabled() || isGenerateRetryAborted(request) || budget.retries >= budget.maxRetries) {
+    if (!state.isEnabled() || isGenerateRetryAborted(request) || isGenerateRetryStopped(request)
+        || budget.retries >= budget.maxRetries) {
         return false;
     }
 
@@ -263,28 +282,34 @@ async function waitBeforeGenerateRetry(state, request, budget, reason) {
     );
 
     const aborted = await sleepBeforeGenerateRetry(request, delay);
-    return !aborted && state.isEnabled() && consumeGenerateRetryAttempt(budget);
+    return !aborted && state.isEnabled() && !isGenerateRetryStopped(request) && consumeGenerateRetryAttempt(budget);
 }
 
 function sleepBeforeGenerateRetry(request, delay) {
     return new Promise(resolve => {
         const signal = request?.signal;
-        if (signal?.aborted) {
+        if (signal?.aborted || isGenerateRetryStopped(request)) {
             resolve(true);
             return;
         }
 
         let timer = null;
-        const onAbort = () => {
+        let unsubscribeStop = null;
+        let settled = false;
+        const finish = aborted => {
+            if (settled) return;
+            settled = true;
             clearTimeout(timer);
-            resolve(true);
-        };
-
-        timer = setTimeout(() => {
             signal?.removeEventListener('abort', onAbort);
-            resolve(false);
-        }, delay);
+            unsubscribeStop?.();
+            resolve(aborted);
+        };
+        const onAbort = () => finish(true);
+
+        timer = setTimeout(() => finish(false), delay);
         signal?.addEventListener('abort', onAbort, { once: true });
+        // 没有 fetch signal(或 signal 不是本次生成)时,靠生成停止信号兜底取消。
+        unsubscribeStop = subscribeGenerationStop(onAbort);
     });
 }
 
