@@ -522,15 +522,15 @@
                                 <hr style="width: 100%; margin: 0;">
                                 <label class="checkbox_label" for="bai_bai_toolkit_generate_blacklist_retry_enabled"
                                     style="align-items: center;"
-                                    title="单聊普通生成和重新生成收尾后，最新回复正文包含任一黑名单文本就调用酒馆原生重新生成，与请求报错共用上方最大重试次数。总次数耗尽仍命中则保留最后回复并停止，等待时可用酒馆停止按钮取消。支持流式与非流式；不检查历史消息和独立思维链字段。不处理续写、候选回复、群聊和后台工具生成。启用酒馆原生自动切换回复时暂停本功能，避免重复重试。">
+                                    title="单聊普通生成和重新生成收尾后，最新回复正文包含任一黑名单文本就调用酒馆原生重新生成，与请求报错共用上方最大重试次数。总次数耗尽仍命中则保留最后回复并停止，等待时可用酒馆停止按钮取消。支持流式与非流式；不检查历史消息和独立思维链字段。不处理续写、候选回复、群聊和后台工具生成。启用酒馆原生自动切换回复时暂停本功能，避免重复重试。黑名单文本每行支持普通文本或 /正则/标志。">
                                     <input id="bai_bai_toolkit_generate_blacklist_retry_enabled" type="checkbox" class="checkbox">
                                     <span>黑名单命中自动重试</span>
                                 </label>
                                 <textarea id="bai_bai_toolkit_generate_blacklist_retry_text"
                                     class="text_pole" rows="5" aria-label="黑名单文本"
                                     style="display: none; width: 100%; min-width: 0; box-sizing: border-box; resize: vertical;"
-                                    title="每行一条，按包含文本匹配，忽略英文大小写和空行；不支持正则表达式。"
-                                    placeholder="抱歉，我无法&#10;I cannot assist"></textarea>
+                                    title="每行一条：普通文本按包含匹配，忽略英文大小写和空行；写成 /正则/标志 时按正则匹配，例如 /504|bad gateway/i。标志按浏览器支持的 JS 正则标志原样生效，常用 g i m s u y；正则不加 i 时区分大小写，g、y 只影响状态不影响是否命中。写不成合法 /正则/标志 的行（如 /foo/ 后带空格、//、/foo/gi!）以及无效正则一律按普通文本处理，无效正则会在控制台提示一次。"
+                                    placeholder="抱歉，我无法&#10;I cannot assist&#10;/timeout|504/i"></textarea>
                             </div>
                         </fieldset>
                         <label class="checkbox_label" for="bai_bai_toolkit_update_prompt_on_available_enabled"
