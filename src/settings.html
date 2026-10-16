@@ -63,13 +63,6 @@
                                 <span>长聊天渲染优化</span>
                             </label>
                             <label class="checkbox_label"
-                                for="bai_bai_toolkit_streaming_regex_defer_enabled"
-                                title="流式生成期间跳过替换内容带 ``` 代码块的正则（状态栏、前端美化面板等），直接显示原始生成内容；生成结束后再完整渲染，缓解长回复流式输出越来越卡。需要柏宝库。">
-                                <input id="bai_bai_toolkit_streaming_regex_defer_enabled" type="checkbox"
-                                    class="checkbox">
-                                <span>流式生成时跳过美化正则</span>
-                            </label>
-                            <label class="checkbox_label"
                                 for="bai_bai_toolkit_reduce_loaded_floors_enabled"
                                 title="将酒馆“加载消息数量”限制为最多 10 层。原值为 0（加载全部）或大于 10 时改为 10；1 到 10 保持不变。">
                                 <input id="bai_bai_toolkit_reduce_loaded_floors_enabled" type="checkbox"
@@ -376,6 +369,13 @@
                                 title="普通单角色 Chat Completion 回复改用柏宝库 save-generate，后端生成完成后自动写入聊天文件；保存失败时保留 SillyTavern 原生保存兜底。">
                                 <input id="bai_bai_toolkit_save_generate_enabled" type="checkbox" class="checkbox">
                                 <span>消息后台生成</span>
+                            </label>
+                            <label class="checkbox_label"
+                                for="bai_bai_toolkit_streaming_regex_defer_enabled"
+                                title="流式生成期间跳过替换内容带 ``` 代码块的正则（状态栏、前端美化面板等），直接显示原始生成内容；生成结束后再完整渲染，缓解长回复流式输出越来越卡。">
+                                <input id="bai_bai_toolkit_streaming_regex_defer_enabled" type="checkbox"
+                                    class="checkbox">
+                                <span>流式生成时跳过美化正则</span>
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_preset_auto_backup_enabled"
                                 title="&#x76D1;&#x542C;&#x9884;&#x8BBE;&#x4FDD;&#x5B58;&#x8BF7;&#x6C42;&#xFF0C;&#x5E76;&#x5C06;&#x540C;&#x4E00;&#x4EFD;&#x9884;&#x8BBE;&#x6570;&#x636E;&#x53D1;&#x9001;&#x5230;&#x67CF;&#x5B9D;&#x5E93;&#x540E;&#x7AEF;&#x5907;&#x4EFD;&#x63A5;&#x53E3;&#xFF1B;&#x4E0D;&#x4F1A;&#x62E6;&#x622A;&#x6216;&#x7B49;&#x5F85;&#x539F;&#x59CB;&#x4FDD;&#x5B58;&#x8BF7;&#x6C42;&#x3002;">
