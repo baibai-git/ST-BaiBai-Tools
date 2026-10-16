@@ -5,6 +5,7 @@ import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from '@sillytavern/scripts
 import { isAdmin } from '@sillytavern/scripts/user';
 import { CURRENT_VERSION, LOG_PREFIX } from './constants.js';
 import { EXTENSION_ID, extensionState, settings } from './state.js';
+import { showExtensionUpdateDiagnosis } from './updateDiagnostics.js';
 
 function initializeExtensionUpdateCheck() {
     void checkForSilentExtensionUpdate()
@@ -160,7 +161,17 @@ async function runExtensionUpdatePrompt(updateButton) {
         return true;
     } catch (error) {
         console.error(`${LOG_PREFIX} Update failed:`, error);
-        toastr.error(`更新失败: ${error.message}`);
+        const message = String(error?.message || error);
+        // 酒馆只会把失败包成一句通用文案,这里换成结构化诊断弹窗。
+        if (message.includes('Internal Server Error')) {
+            void showExtensionUpdateDiagnosis({
+                extensionName: EXTENSION_ID,
+                isGlobal: getInstalledExtensionType() === 'global',
+                responseText: message,
+            }).catch((diagnosisError) => console.debug(`${LOG_PREFIX} Update diagnosis failed`, diagnosisError));
+        } else {
+            toastr.error(`更新失败: ${message}`);
+        }
         return false;
     } finally {
         if (shouldResetButton) {

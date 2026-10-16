@@ -9,6 +9,7 @@ import { applyMessageEditBottomActions } from './editBottomActions.js';
 import { applyLongChatDomRenderOptimization } from './longChatRender.js';
 import { applyMobileAutoKeyboardSuppression, applyMobileMessageEditScrollGuard } from './mobileKeyboard.js';
 import { settings } from './state.js';
+import { isStreamingRegexDeferSupported } from './streamingRegexDefer.js';
 import { applyMessageTripleClickEdit } from './tripleClickEdit.js';
 import { applyWelcomeRecentChatDirectOpenOptimization } from './welcomeRecent.js';
 
@@ -48,6 +49,13 @@ function bindChatOptimizationSettings({ saveSettings } = {}) {
             settings.longChatDomRenderOptimizationEnabled = Boolean($(this).prop('checked'));
             persistSettings();
             applyLongChatDomRenderOptimization();
+        });
+
+    $('#bai_bai_toolkit_streaming_regex_defer_enabled')
+        .prop('checked', settings.streamingRegexDeferEnabled !== false)
+        .on('input', function () {
+            settings.streamingRegexDeferEnabled = Boolean($(this).prop('checked'));
+            persistSettings();
         });
 
     $('#bai_bai_toolkit_reduce_loaded_floors_enabled')
@@ -158,6 +166,16 @@ function applyChatOptimizationCompatibilityIndicators(container) {
             '（当前酒馆版本过低，请更新）',
             true,
             '当前酒馆版本未导出 messageEdit，请更新酒馆后使用。',
+        );
+    }
+
+    if (!isStreamingRegexDeferSupported()) {
+        markSettingCompatibility(
+            container,
+            '#bai_bai_toolkit_streaming_regex_defer_enabled',
+            '（需要新版柏宝库）',
+            true,
+            '未检测到柏宝库的正则桥接，请安装柏宝库或重启酒馆让柏宝库更新到最新版本，然后刷新页面。',
         );
     }
 }

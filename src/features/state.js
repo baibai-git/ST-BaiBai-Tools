@@ -32,6 +32,7 @@ const defaultSettings = {
     saveRequestGzipEnabled: true,
     translateMessageUpdatedOptimizationEnabled: true,
     longChatDomRenderOptimizationEnabled: true,
+    streamingRegexDeferEnabled: true,
     reduceLoadedFloorsEnabled: true,
     messageCompletionScrollToMiddleEnabled: true,
     chatListScrollOptimizationEnabled: true,

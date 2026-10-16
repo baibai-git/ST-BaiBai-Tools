@@ -17,6 +17,7 @@ import { installSaveGenerateFetchHook } from './features/saveGenerate.js';
 import { applyFeatureSettings, renderSettingsPanel } from './features/settingsPanel.js';
 import { extensionState, initializeSettings, saveExtensionSettings, settings } from './features/state.js';
 import { initializeExtensionUpdateCheck } from './features/updateCheck.js';
+import { installExtensionUpdateDiagnosticsFetchHook } from './features/updateDiagnostics.js';
 
 chatOptimizations.configureChatOptimizations({
     settings,
@@ -66,6 +67,7 @@ installGenerationLifecycle();
 installGenerateRetryFetchHook();
 installSaveGenerateFetchHook();
 installGenerateBlacklistRetry();
+installExtensionUpdateDiagnosticsFetchHook();
 installReloadGreetingGuard();
 installPageRestoreSelectionGuard();
 chatOptimizations.observeChatManagementPopupCleanup();

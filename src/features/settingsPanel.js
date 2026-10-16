@@ -438,6 +438,7 @@ function applyFeatureSettings() {
     applyTranslateMessageUpdatedOptimization();
     chatOptimizations.applyReduceLoadedFloors();
     chatOptimizations.applyLongChatDomRenderOptimization();
+    chatOptimizations.applyStreamingRegexDefer();
     chatOptimizations.applyMessageCompletionScrollToMiddle();
     chatOptimizations.applyMobileAutoKeyboardSuppression();
     chatOptimizations.applyMobileMessageEditScrollGuard();
