@@ -10,6 +10,7 @@ import { applyCharacterListAvatarLazyLoadOptimization, applyCharacterSearchInput
 import { LOG_PREFIX } from './constants.js';
 import { applyCustomCssInputOptimization } from './customCss.js';
 import { applyDescriptionCodeMirrorEditorOptimization } from './descEditor.js';
+import { initializeExtensionInstallOptimization } from './extensionInstallOptimization.js';
 import { applyFastChatGetOptimization } from './fastChat.js';
 import { bindGenerateBlacklistRetrySettings } from './generateBlacklistRetry.js';
 import { bindGenerateRetrySettings } from './generateRetry.js';
@@ -77,6 +78,7 @@ async function renderSettingsPanel() {
 
     initializeUpdateUI(container);
     initializeBaibaokuPanel(container);
+    initializeExtensionInstallOptimization(container);
 
     $('#bai_bai_toolkit_update_prompt_on_available_enabled')
         .prop('checked', settings.updatePromptOnAvailableEnabled)

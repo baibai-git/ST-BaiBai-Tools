@@ -5,6 +5,7 @@ import * as presetOptimizations from './preset/index.js';
 import * as worldInfoPageOptimization from './worldinfo/index.js';
 import { DESCRIPTION_CODEMIRROR_HISTORY_MAX_LENGTH, LOG_PREFIX } from './features/constants.js';
 import { loadDescriptionCodeMirrorModules } from './features/descEditor.js';
+import { installExtensionOpsFetchHook } from './features/extensionOps.js';
 import { disableFastCharacterListFetchHook, disableFastSettingsBootstrapFetchHook } from './features/fastBootstrap.js';
 import { installGenerateBlacklistRetry } from './features/generateBlacklistRetry.js';
 import { installGenerateRetryFetchHook } from './features/generateRetry.js';
@@ -68,6 +69,8 @@ installGenerateRetryFetchHook();
 installSaveGenerateFetchHook();
 installGenerateBlacklistRetry();
 installExtensionUpdateDiagnosticsFetchHook();
+// 必须包在诊断钩子外层:任务 id 头要加在请求上,诊断钩子再按响应里的柏宝库标记跳过。
+installExtensionOpsFetchHook();
 installReloadGreetingGuard();
 installPageRestoreSelectionGuard();
 chatOptimizations.observeChatManagementPopupCleanup();
