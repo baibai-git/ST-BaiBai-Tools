@@ -3,6 +3,8 @@ import { LOG_PREFIX } from './constants.js';
 import { fetchExtensionManagerApi } from './extensionOps.js';
 
 const EVENT_NAMESPACE = '.baiBaiToolkitExtensionInstallOptimization';
+// 读到后端状态之前先显示上次读到的值(没读过就按后端默认的开),免得每次打开页面开关都从关跳到开
+const LAST_STATE_KEY = 'bai_bai_toolkit_extension_install_optimization_enabled';
 
 function initializeExtensionInstallOptimization(container) {
     const toggle = container.find('#bai_bai_toolkit_extension_install_optimization_enabled');
@@ -12,6 +14,7 @@ function initializeExtensionInstallOptimization(container) {
 
     const label = toggle.closest('label');
     label.data('defaultTitle', label.attr('title') ?? '');
+    toggle.prop('checked', localStorage.getItem(LAST_STATE_KEY) !== 'false');
 
     toggle.off(`input${EVENT_NAMESPACE}`)
         .on(`input${EVENT_NAMESPACE}`, () => {
@@ -74,8 +77,10 @@ function applyInstallOptimizationState(toggle, state, reason = '') {
     const disabledReason = reason || (state && !state.isAdmin ? '只有管理员可以修改这个开关。' : '');
     const label = toggle.closest('label');
     const defaultTitle = label.data('defaultTitle');
+    const enabled = Boolean(state) && state.interceptEnabled !== false;
+    localStorage.setItem(LAST_STATE_KEY, String(enabled));
 
-    toggle.prop('checked', Boolean(state) && state.interceptEnabled !== false)
+    toggle.prop('checked', enabled)
         .prop('disabled', Boolean(disabledReason));
     label.toggleClass('disabled', Boolean(disabledReason))
         .css('opacity', disabledReason ? '0.55' : '')
