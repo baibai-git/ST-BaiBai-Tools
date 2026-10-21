@@ -3,7 +3,8 @@ import { extensionTypes } from '@sillytavern/scripts/extensions';
 import { t } from '@sillytavern/scripts/i18n';
 import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from '@sillytavern/scripts/popup';
 import { isAdmin } from '@sillytavern/scripts/user';
-import { CURRENT_VERSION, LOG_PREFIX } from './constants.js';
+import { CURRENT_VERSION, EXTENSION_OPS_OP_HEADER, EXTENSION_VERSION_CHECK_TIMEOUT_MS, LOG_PREFIX } from './constants.js';
+import { fetchExtensionManagerApi } from './extensionOps.js';
 import { EXTENSION_ID, extensionState, settings } from './state.js';
 import { showExtensionUpdateDiagnosis } from './updateDiagnostics.js';
 
@@ -39,17 +40,7 @@ async function checkForSilentExtensionUpdate() {
 
 async function runSilentExtensionUpdate() {
     try {
-        const localVersion = CURRENT_VERSION;
-
-        const remoteManifestUrl = `https://raw.githubusercontent.com/baibai-git/SillyTavern-Mobile-Resize-Guard/main/manifest.json?t=${Date.now()}`;
-        const remoteManifestResponse = await fetch(remoteManifestUrl, { cache: 'no-store' });
-        if (!remoteManifestResponse.ok) {
-            throw new Error(`Failed to fetch remote manifest: ${remoteManifestResponse.statusText}`);
-        }
-        const remoteManifest = await remoteManifestResponse.json();
-        const remoteVersion = remoteManifest.version;
-
-        const updateAvailable = isVersionGreater(remoteVersion, localVersion);
+        const updateAvailable = await detectExtensionUpdate();
 
         applyUpdateAvailableVisualState(updateAvailable);
 
@@ -62,6 +53,59 @@ async function runSilentExtensionUpdate() {
         console.error(`${LOG_PREFIX} Update check failed:`, error);
         throw error;
     }
+}
+
+/**
+ * 先问柏宝库:服务器能自动选直连/代理/镜像线路读远端版本,浏览器连不上 GitHub 也能检查。
+ * 没装柏宝库或它检查失败时,退回浏览器直接读 GitHub 上的 manifest。
+ */
+async function detectExtensionUpdate() {
+    const backend = await fetchBaibaokuExtensionVersion();
+    const backendReliable = Boolean(backend?.currentCommitHash) && !backend.baibaoku?.remoteCheckFailed;
+    const remoteVersion = backendReliable ? backend.baibaoku?.remoteManifest?.version : null;
+    if (remoteVersion) {
+        return isVersionGreater(remoteVersion, CURRENT_VERSION);
+    }
+    if (backendReliable && backend.isUpToDate !== false) {
+        return false;
+    }
+
+    try {
+        return isVersionGreater(await fetchRemoteManifestVersion(), CURRENT_VERSION);
+    } catch (error) {
+        // 浏览器连不上 GitHub,但服务器已经确认远端有新提交
+        if (backendReliable) {
+            return true;
+        }
+        throw error;
+    }
+}
+
+async function fetchBaibaokuExtensionVersion() {
+    const type = getInstalledExtensionType();
+    if (!type || type === 'system') {
+        return null;
+    }
+
+    try {
+        return await fetchExtensionManagerApi('version', {
+            method: 'POST',
+            body: { extensionName: EXTENSION_ID, global: type === 'global', includeRemoteManifest: true },
+            timeoutMs: EXTENSION_VERSION_CHECK_TIMEOUT_MS,
+        });
+    } catch {
+        return null;
+    }
+}
+
+async function fetchRemoteManifestVersion() {
+    const remoteManifestUrl = `https://raw.githubusercontent.com/baibai-git/SillyTavern-Mobile-Resize-Guard/main/manifest.json?t=${Date.now()}`;
+    const remoteManifestResponse = await fetch(remoteManifestUrl, { cache: 'no-store' });
+    if (!remoteManifestResponse.ok) {
+        throw new Error(`Failed to fetch remote manifest: ${remoteManifestResponse.statusText}`);
+    }
+    const remoteManifest = await remoteManifestResponse.json();
+    return remoteManifest.version;
 }
 
 function isVersionGreater(v1, v2) {
@@ -156,14 +200,17 @@ async function runExtensionUpdatePrompt(updateButton) {
         }
 
         setUpdateButtonLoading(button);
-        await performCurrentExtensionUpdate();
-        shouldResetButton = false;
-        return true;
+        const updated = await performCurrentExtensionUpdate();
+        if (updated) {
+            shouldResetButton = false;
+        }
+        return updated;
     } catch (error) {
         console.error(`${LOG_PREFIX} Update failed:`, error);
         const message = String(error?.message || error);
         // 酒馆只会把失败包成一句通用文案,这里换成结构化诊断弹窗。
-        if (message.includes('Internal Server Error')) {
+        // 柏宝库接管时报错本身就是具体原因,详情和强制更新由 extensionOps 另外提示。
+        if (message.includes('Internal Server Error') && !error?.handledByBaibaoku) {
             void showExtensionUpdateDiagnosis({
                 extensionName: EXTENSION_ID,
                 isGlobal: getInstalledExtensionType() === 'global',
@@ -199,12 +246,25 @@ async function confirmExtensionUpdate() {
 async function performCurrentExtensionUpdate() {
     const response = await updateCurrentExtension();
     if (!response.ok) {
-        throw new Error(await getResponseErrorMessage(response));
+        const error = new Error(await getResponseErrorMessage(response));
+        error.handledByBaibaoku = Boolean(response.headers.get(EXTENSION_OPS_OP_HEADER));
+        throw error;
     }
 
+    const data = await response.json().catch(() => null);
     applyUpdateAvailableVisualState(false);
+    if (data?.isUpToDate) {
+        // 服务器上的文件已经是最新(比如酒馆启动时自动更新过),只是页面还在跑旧代码
+        extensionState.silentUpdateResult = { isUpToDate: true };
+        if (!data.baibaoku?.staleSource) {
+            toastr.info('服务器上已经是最新版本,没有可更新的内容。如果页面还是旧版本,刷新页面即可。');
+        }
+        return false;
+    }
+
     toastr.success(t`Extension updated successfully. Reloading...`);
     setTimeout(() => location.reload(), 1000);
+    return true;
 }
 
 function setUpdateButtonLoading(button) {

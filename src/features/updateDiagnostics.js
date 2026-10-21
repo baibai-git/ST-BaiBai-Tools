@@ -1,10 +1,12 @@
 // 酒馆更新扩展失败时只会抛一句通用文案(真实报错只在服务端控制台),
 // 这里在前端拦截 /api/extensions/update 的 500,再用酒馆已有接口做体检,
 // 给用户一份能看懂的失败原因和操作建议。只读检测,不会改动任何仓库。
+// 柏宝库接管的请求(响应带 X-Baibaoku-Extension-Op)由 extensionOps 报告,这里跳过。
 import { getRequestHeaders } from '@sillytavern/script';
 import { callGenericPopup, POPUP_TYPE } from '@sillytavern/scripts/popup';
 import {
     EXTENSION_BRANCHES_PATH,
+    EXTENSION_OPS_OP_HEADER,
     EXTENSION_UPDATE_DIAGNOSTICS_COOLDOWN_MS,
     EXTENSION_UPDATE_DIAGNOSTICS_FETCH_KEY,
     EXTENSION_UPDATE_DIAGNOSTICS_GITHUB_PROBE_URL,
@@ -80,7 +82,7 @@ function installExtensionUpdateDiagnosticsFetchHook() {
         const requestInfo = isExtensionUpdate ? await readExtensionUpdateRequestInfo(input, init) : null;
         const response = await state.originalFetch(input, init);
 
-        if (requestInfo && response?.status === 500) {
+        if (requestInfo && response?.status === 500 && !response.headers?.get(EXTENSION_OPS_OP_HEADER)) {
             void (async () => {
                 try {
                     const responseText = await response.clone().text();
@@ -326,7 +328,8 @@ function buildUpdateDiagnosisConclusion(diagnosis) {
         stage: '访问 GitHub(git fetch)',
         reason,
         suggestions: [
-            '给 git 单独配代理(酒馆的请求代理不影响 git):git config --global http.proxy http://127.0.0.1:7897,https.proxy 同理。',
+            '推荐安装柏宝库并在柏宝箱「柏宝库」页打开「插件安装优化」:更新时会自动在直连、代理和镜像之间切换线路。',
+            '不建议给 git 配全局代理:代理软件一关,所有 git 操作都会失败(这也是更新失败的常见原因)。可以用 git config --global --get http.proxy 查看,确实不用了就用 git config --global --unset http.proxy 删掉。',
             '或者让系统代理开启 TUN/全局模式,确保命令行也能走代理。',
             '如果服务器上没装 git,更新同样会报这个 500;到酒馆启动窗口确认是否出现 spawn git ENOENT。',
             '如果是从手机/其他设备访问局域网里的酒馆,浏览器能不能访问 GitHub 不代表服务器能不能。',
@@ -334,7 +337,7 @@ function buildUpdateDiagnosisConclusion(diagnosis) {
         commands: [
             `cd ${directory}`,
             'git fetch origin',
-            'git config --global http.proxy http://127.0.0.1:7897',
+            'git config --global --get http.proxy',
         ],
         probeBrowser: true,
     };
@@ -434,6 +437,7 @@ function escapeHtml(value) {
 export {
     buildUpdateDiagnosisConclusion,
     diagnoseExtensionUpdateFailure,
+    hasUserInteracted,
     installExtensionUpdateDiagnosticsFetchHook,
     probeBrowserGithubReachability,
     renderUpdateDiagnosisHtml,
