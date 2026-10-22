@@ -369,6 +369,7 @@ async function maybeShowBaibaokuBackendUpdatePrompt(status) {
         <div class="bai_bai_toolkit_baibaoku_update_prompt">
             <h3>柏宝库需要更新！</h3>
             <p>当前版本存在部分BUG，请重启酒馆让柏宝库自动更新到最新版本，注意不是刷新网页，是重启酒馆后台</p>
+            <p>如果重启后还弹这个提示，说明柏宝库自动更新失败了，请删除柏宝库后重新安装</p>
         </div>
     `, POPUP_TYPE.TEXT, '', {
         okButton: '知道了',

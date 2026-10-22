@@ -1,13 +1,13 @@
 import { t } from '@sillytavern/scripts/i18n';
 import { promptManager } from '@sillytavern/scripts/openai';
 import { uuidv4 } from '@sillytavern/scripts/utils';
-import { OPENAI_SETTINGS_SELECTOR, PRESET_DRAG_INTERACTIVE_SELECTOR, PRESET_GLOBAL_LIBRARY_DATABASE, PRESET_GLOBAL_LIBRARY_KEY, PRESET_GLOBAL_LIBRARY_STORE, PRESET_GLOBAL_LIBRARY_VERSION, PRESET_PROMPT_MANAGER_LIST_SELECTOR, PRESET_VUE_EMPTY_INSERT_THRESHOLD_PX, PRESET_VUE_GLOBAL_LIBRARY_DRAG_GROUP, PRESET_VUE_GLOBAL_LIBRARY_ENTRY_ID, refreshPromptManagerTokensDebounced } from './constants.js';
+import { OPENAI_SETTINGS_SELECTOR, PRESET_GLOBAL_LIBRARY_DATABASE, PRESET_GLOBAL_LIBRARY_KEY, PRESET_GLOBAL_LIBRARY_STORE, PRESET_GLOBAL_LIBRARY_VERSION, PRESET_PROMPT_MANAGER_LIST_SELECTOR, PRESET_VUE_EMPTY_INSERT_THRESHOLD_PX, PRESET_VUE_GLOBAL_LIBRARY_DRAG_GROUP, PRESET_VUE_GLOBAL_LIBRARY_ENTRY_ID, refreshPromptManagerTokensDebounced } from './constants.js';
 import { getPresetPromptGroupState, savePresetPromptGroupSettings } from './groupState.js';
 import { closePresetPromptActionMenus, createUniquePresetPromptIdentifier, handlePresetPromptActionButtonClick, refreshPresetPromptListAfterCopy } from './listActions.js';
 import { flushPendingPresetPromptChanges, markPresetPromptServiceSettingsSavePending } from './pendingChanges.js';
 import { LOG_PREFIX, extensionState, settings } from './state.js';
 import { isPromptManagerReadyForFastPresetSwitch, renderPromptManagerListWithoutTokenStats } from './switchFast.js';
-import { applyPresetVueDragGestureOptions, getPresetVuePromptDragHandleSelector, notifyPresetVuePromptDragStarted } from './vueDrag.js';
+import { applyPresetVueDragGestureOptions, getPresetVuePromptDragHandleSelector, isPresetVuePromptDragStartFiltered, notifyPresetVuePromptDragStarted } from './vueDrag.js';
 import { clearPresetVuePromptGroupBodyUnmountTimer, getPresetVuePromptListManagerState, isPresetVuePromptGroupBodyMounted, markPresetVuePromptListSyncSignatureCurrent, runPresetVuePromptBodyHeightTransition, schedulePresetVuePromptGroupBodyUnmount, setPresetVuePromptGroupBodyMounted, syncPresetVuePromptListManagerState } from './vueList.js';
 import { renderPresetVuePromptActionButton } from './vueRender.js';
 
@@ -361,7 +361,7 @@ function buildPresetVueGlobalLibraryDraggableProps(list, { groupId }) {
             put: dragDisabled ? false : canPutPresetVueGlobalLibraryItem,
         },
         draggable: 'li.completion_prompt_manager_prompt_draggable',
-        filter: PRESET_DRAG_INTERACTIVE_SELECTOR,
+        filter: isPresetVuePromptDragStartFiltered,
         preventOnFilter: false,
         sort: true,
         disabled: dragDisabled,

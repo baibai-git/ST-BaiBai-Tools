@@ -1,11 +1,13 @@
+import { t } from '@sillytavern/scripts/i18n';
 import { isMobile } from '@sillytavern/scripts/RossAscends-mods';
-import { PRESET_DRAG_ACTIVE_CLASS, PRESET_DRAG_INDICATOR_CLASS, PRESET_PROMPT_MANAGER_LIST_SELECTOR, PRESET_VUE_DRAGGING_BODY_CLASS, PRESET_VUE_DRAG_PLACEMENT_LISTENER_KEY, PRESET_VUE_DRAG_READY_FEEDBACK_CLASS, PRESET_VUE_DYNAMIC_DRAG_DELAY_HANDLER_KEY, PRESET_VUE_EMPTY_INSERT_THRESHOLD_PX, PRESET_VUE_GROUP_DROP_SURFACE_SELECTOR, PRESET_VUE_GROUP_DROP_TARGET_CLASS, PRESET_VUE_GROUP_HEADER_CUSTOM_DRAG_LISTENER_KEY, PRESET_VUE_GROUP_HEADER_DRAG_SUPPRESS_MS, PRESET_VUE_GROUP_HEADER_TOGGLE_DISTANCE_PX, PRESET_VUE_POINTER_START_THRESHOLD_PX, PRESET_VUE_TOP_LEVEL_DRAGGABLE_CLASS, PRESET_VUE_TOUCH_DRAG_DELAY_MS, PRESET_VUE_TOUCH_SCROLL_GUARD_KEY, PRESET_VUE_TOUCH_START_THRESHOLD_PX, refreshPromptManagerTokensDebounced } from './constants.js';
+import { PRESET_DRAG_ACTIVE_CLASS, PRESET_DRAG_INDICATOR_CLASS, PRESET_DRAG_INTERACTIVE_SELECTOR, PRESET_PROMPT_MANAGER_LIST_SELECTOR, PRESET_VUE_DRAGGING_BODY_CLASS, PRESET_VUE_DRAG_PLACEMENT_LISTENER_KEY, PRESET_VUE_DRAG_READY_FEEDBACK_CLASS, PRESET_VUE_DYNAMIC_DRAG_DELAY_HANDLER_KEY, PRESET_VUE_EMPTY_INSERT_THRESHOLD_PX, PRESET_VUE_GROUP_DROP_SURFACE_SELECTOR, PRESET_VUE_GROUP_DROP_TARGET_CLASS, PRESET_VUE_GROUP_HEADER_CUSTOM_DRAG_LISTENER_KEY, PRESET_VUE_GROUP_HEADER_DRAG_SUPPRESS_MS, PRESET_VUE_GROUP_HEADER_TOGGLE_DISTANCE_PX, PRESET_VUE_POINTER_START_THRESHOLD_PX, PRESET_VUE_TOP_LEVEL_DRAGGABLE_CLASS, PRESET_VUE_TOUCH_DRAG_DELAY_MS, PRESET_VUE_TOUCH_SCROLL_GUARD_KEY, PRESET_VUE_TOUCH_START_THRESHOLD_PX, refreshPromptManagerTokensDebounced } from './constants.js';
 import { autoScrollPromptManagerDragContainer, clearPromptManagerCustomDragPending, disablePromptManagerStockSortable, getPresetDragPoint, getPromptManagerDragScrollContainer } from './dragCustom.js';
 import { closePresetPromptActionMenus } from './listActions.js';
 import { getPresetVuePromptGroupAssignmentsFromModel, schedulePresetVuePromptOrderSaveAfterDrop } from './pendingChanges.js';
+import { isPresetVuePromptSearchFiltering } from './search.js';
 import { extensionState, settings } from './state.js';
 import { areStringArraysEqual } from './util.js';
-import { cancelPresetVuePromptBodyHeightAnimations, getPresetVuePromptListManagerState, getPromptManagerListElement, isPresetVuePromptDragLocked, isPresetVuePromptGroupBodyMounted, isPresetVuePromptListDragging } from './vueList.js';
+import { cancelPresetVuePromptBodyHeightAnimations, getPresetVuePromptListManagerState, getPromptManagerListElement, isPresetVuePromptDragLockSettingEnabled, isPresetVuePromptDragLocked, isPresetVuePromptGroupBodyMounted, isPresetVuePromptListDragging } from './vueList.js';
 import { getPresetVuePromptFlatIds, sanitizePresetVuePromptListModel, togglePresetVuePromptGroupCollapsed } from './vueModel.js';
 import { renderPresetVuePromptRow } from './vueRender.js';
 
@@ -1679,7 +1681,8 @@ function vibratePresetVuePromptDragFeedback() {
 }
 
 function getPresetVuePromptDragHandleSelector() {
-    if (isPresetVuePromptDragLocked()) {
+    // 只看用户的锁定设置:handle 只在重建 draggable 时生效,搜索筛选的临时锁由下面的 filter 动态拦。
+    if (isPresetVuePromptDragLockSettingEnabled()) {
         return '__bai_bai_preset_drag_locked__';
     }
 
@@ -1690,6 +1693,97 @@ function getPresetVuePromptDragHandleSelector() {
     return settings.presetMobileWholeRowDragEnabled
         ? 'li.completion_prompt_manager_prompt_draggable'
         : '.drag-handle';
+}
+
+// Sortable 的 filter:每次按下都会调用,返回 true 就不起拖。Sortable 配置只在重建时生效,
+// 搜索筛选、分组选择这类临时锁定就在这里动态拦住;按钮等交互元素上不起拖,和原来的选择器写法一样。
+function isPresetVuePromptDragStartFiltered(event, item, sortable) {
+    const target = event?.target instanceof Element ? event.target : null;
+    const interactive = target?.closest(PRESET_DRAG_INTERACTIVE_SELECTOR);
+
+    if (interactive && interactive !== sortable?.el && sortable?.el?.contains(interactive)) {
+        return true;
+    }
+
+    if (!isPresetVuePromptDragLocked() && !getPresetVuePromptListManagerState().state?.rangeSelection?.active) {
+        return false;
+    }
+
+    armPresetVuePromptSearchDragHint(event, item, sortable);
+    return true;
+}
+
+// 手机上搜索筛选时长按条目(平时这样就拖起来了)却拖不动,提示一次原因;每次打开搜索只提示一次。
+function armPresetVuePromptSearchDragHint(event, item, sortable) {
+    const manager = getPresetVuePromptListManagerState();
+    const touchLike = event?.type === 'touchstart' || (event?.type === 'pointerdown' && event.pointerType !== 'mouse');
+
+    // 嵌套列表里同一次按下会依次经过分组列表和主列表的 filter,只算一次。
+    if (!item || !touchLike || !isMobile() || manager.searchDragHintShown || manager.searchDragHint?.event === event) {
+        return;
+    }
+
+    // 用户自己锁的、或正在选分组范围,都不是搜索造成的,不提示。
+    if (!isPresetVuePromptSearchFiltering() || isPresetVuePromptDragLockSettingEnabled() || manager.state?.rangeSelection?.active) {
+        return;
+    }
+
+    // 平时只能按住手柄拖时,按在别处本来就拖不动,也不提示。
+    const handle = sortable?.options?.handle;
+
+    if (handle && !(event.target instanceof Element && event.target.closest(handle))) {
+        return;
+    }
+
+    const start = getPresetDragPoint(event);
+
+    if (!start) {
+        return;
+    }
+
+    clearPresetVuePromptSearchDragHint(manager);
+    const hint = { event, timer: null, listener: null };
+    hint.listener = nextEvent => {
+        const point = nextEvent.type.endsWith('move') ? getPresetDragPoint(nextEvent) : null;
+
+        if (point && Math.hypot(point.clientX - start.clientX, point.clientY - start.clientY) <= PRESET_VUE_TOUCH_START_THRESHOLD_PX) {
+            return;
+        }
+
+        clearPresetVuePromptSearchDragHint(manager);
+    };
+    hint.timer = window.setTimeout(() => {
+        clearPresetVuePromptSearchDragHint(manager);
+
+        if (isPresetVuePromptSearchFiltering()) {
+            manager.searchDragHintShown = true;
+            toastr.info(t`搜索结果里不能拖动，清空搜索后再拖。`);
+        }
+    }, PRESET_VUE_TOUCH_DRAG_DELAY_MS);
+    manager.searchDragHint = hint;
+    togglePresetVuePromptSearchDragHintListeners(hint.listener, true);
+}
+
+function clearPresetVuePromptSearchDragHint(manager) {
+    const hint = manager.searchDragHint;
+
+    if (!hint) {
+        return;
+    }
+
+    window.clearTimeout(hint.timer);
+    togglePresetVuePromptSearchDragHintListeners(hint.listener, false);
+    manager.searchDragHint = null;
+}
+
+function togglePresetVuePromptSearchDragHintListeners(listener, enabled) {
+    for (const type of ['pointermove', 'pointerup', 'pointercancel', 'touchmove', 'touchend', 'touchcancel', 'scroll']) {
+        if (enabled) {
+            document.addEventListener(type, listener, true);
+        } else {
+            document.removeEventListener(type, listener, true);
+        }
+    }
 }
 
 function setPresetVuePromptDragging(model, dragging) {
@@ -1825,6 +1919,7 @@ export {
     getPresetVueSortableInstance,
     handlePresetVuePromptGroupHeaderClickFallback,
     installPresetVueDynamicDragDelayHandlers,
+    isPresetVuePromptDragStartFiltered,
     isPresetVuePromptDraggedDomElement,
     isPresetVuePromptGroupDragMoveAllowed,
     isPresetVuePromptGroupHeaderInteractiveEvent,

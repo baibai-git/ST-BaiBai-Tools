@@ -173,6 +173,23 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.bai-bai-preset-drag-locked .bai-bai-preset-group-header {
     cursor: default !important;
 }
+${hostHandleColumnInflow ? '' : `
+/* 原生布局的手柄绝对定位、按整行高度居中,正好叠在条目名第一个图标上;行一变高(长名字换行、
+   搜索片段)就滑到中间露出来。整行拖或不能拖时手柄没用,直接隐藏;只有它是唯一拖拽入口
+   (手机关闭整条拖拽)时才显示,放进左侧留白并只对齐第一行。全局库条目有自己的手柄,不动。 */
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.bai-bai-preset-drag-handle-hidden li.completion_prompt_manager_prompt:not(.bai-bai-preset-global-library-prompt) > .drag-handle {
+    display: none !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.bai-bai-preset-drag-handle-visible li.completion_prompt_manager_prompt:not(.bai-bai-preset-global-library-prompt) {
+    padding-left: 20px !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.bai-bai-preset-drag-handle-visible li.completion_prompt_manager_prompt:not(.bai-bai-preset-global-library-prompt) > .drag-handle {
+    left: 0 !important;
+    grid-row: 1 / 2 !important;
+}
+`}
 
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites {
     display: flex;
@@ -475,6 +492,103 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_list_head .bai-bai-preset-list-head-actions {
     justify-self: end !important;
     align-self: center !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_list_head.bai-bai-preset-list-head-searching {
+    row-gap: 6px !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-search-bar,
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-search-empty {
+    grid-column: 1 / -1;
+    min-width: 0;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-search-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-search-field {
+    position: relative;
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-search-input {
+    flex: 1 1 auto;
+    width: auto !important;
+    min-width: 0;
+    margin: 0 !important;
+    padding-inline-end: calc(var(--mainFontSize) * 1.9) !important;
+    -webkit-user-select: text;
+    user-select: text;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-search-clear {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-end: 0;
+    display: flex;
+    align-items: center;
+    padding: 0 calc(var(--mainFontSize) * 0.55);
+    opacity: 0.55;
+    cursor: pointer;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-search-clear:hover {
+    opacity: 0.9;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-search-count,
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-search-empty {
+    opacity: 0.65;
+    font-size: calc(var(--mainFontSize) * 0.82);
+    white-space: nowrap;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-search-count {
+    flex: 0 0 auto;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-search-empty {
+    padding: 4px 0;
+    text-align: center;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-list-head-actions .bai-bai-preset-search-toggle-active {
+    color: var(--SmartThemeQuoteColor) !important;
+    opacity: 1 !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_prompt.bai-bai-preset-search-miss,
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.bai-bai-preset-group.bai-bai-preset-search-miss {
+    display: none !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.bai-bai-preset-search-open .bai-bai-preset-group-body,
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.bai-bai-preset-search-open .bai-bai-preset-group-toggle {
+    transition: none !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-search-mark {
+    padding: 0 1px;
+    border-radius: 3px;
+    background-color: color-mix(in srgb, var(--SmartThemeQuoteColor) 40%, transparent);
+    color: inherit;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_prompt .bai-bai-preset-search-snippet {
+    grid-column: ${hostHandleColumnInflow ? '2 / -1' : '1 / -1'};
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    opacity: 0.7;
+    font-size: calc(var(--mainFontSize) * 0.8);
+    line-height: 1.4;
 }
 
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_list_head .prompt_manager_prompt_tokens,
