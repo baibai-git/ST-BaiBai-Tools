@@ -2,7 +2,7 @@ import { resetScrollHeight } from '@sillytavern/scripts/utils';
 import { WORLD_INFO_VUE_LIST_OPTIMIZATION_KEY } from './constants.js';
 import { installWorldInfoEditorSelectGrouping, installWorldInfoEditorSelectSearch, removeWorldInfoEditorSelectGrouping, removeWorldInfoEditorSelectSearch } from './editorSelect.js';
 import { installWorldInfoGlobalSelectorOptimization, removeWorldInfoGlobalSelectorOptimization } from './globalSelector.js';
-import { applyWorldInfoMobileExpandedLayouts, applyWorldInfoMobileHeaderLayouts, applyWorldInfoPopupLayout, installWorldInfoMobileHeaderLayoutWatcher, installWorldInfoMobileLayoutMutationObserver, removeWorldInfoMobileHeaderLayoutWatcher, removeWorldInfoMobileLayoutMutationObserver, restoreWorldInfoMobileExpandedLayouts, restoreWorldInfoMobileHeaderLayouts, restoreWorldInfoPopupLayout } from './mobileLayout.js';
+import { applyWorldInfoMobileExpandedLayouts, applyWorldInfoMobileHeaderLayout, applyWorldInfoMobileHeaderLayouts, applyWorldInfoPopupLayout, installWorldInfoMobileHeaderLayoutWatcher, installWorldInfoMobileLayoutMutationObserver, removeWorldInfoMobileHeaderLayoutWatcher, removeWorldInfoMobileLayoutMutationObserver, restoreWorldInfoMobileExpandedLayouts, restoreWorldInfoMobileHeaderLayouts, restoreWorldInfoPopupLayout, shouldUseWorldInfoMobileHeaderLayout } from './mobileLayout.js';
 import { installWorldInfoMobileHeaderLayoutStyle, removeWorldInfoMobileHeaderLayoutStyle } from './mobileLayoutStyle.js';
 import { installWorldInfoSearchReplacePanel, removeWorldInfoSearchReplacePanel } from './searchReplace.js';
 import { LOG_PREFIX, extensionState, settings } from './state.js';
@@ -307,6 +307,7 @@ function createWorldInfoVueListRootComponent(vue, context) {
                     return;
                 }
 
+                applyWorldInfoMobileHeaderLayoutsBeforeAppend(context.appendCalls);
                 appendCapturedWorldInfoListCalls(context.state, context.list, context.appendCalls, context.append);
                 refreshWorldInfoVueListAfterAppend(context.list);
             });
@@ -314,6 +315,22 @@ function createWorldInfoVueListRootComponent(vue, context) {
             return () => null;
         },
     };
+}
+
+// 手机版标题栏趁条目还没插进页面就改好:离线时挪节点很便宜,插进页面后再挪,
+// 每挪一个都要重建渲染对象、重算样式,还会通知页面上所有 MutationObserver(原版翻译也会把挪过的节点再翻一遍)。
+function applyWorldInfoMobileHeaderLayoutsBeforeAppend(appendCalls) {
+    if (!shouldUseWorldInfoMobileHeaderLayout()) {
+        return;
+    }
+
+    for (const args of appendCalls) {
+        for (const node of normalizeWorldInfoAppendArguments(args.filter(arg => typeof arg !== 'string'))) {
+            if (node instanceof HTMLElement && !node.isConnected && node.classList.contains('world_entry')) {
+                applyWorldInfoMobileHeaderLayout(node);
+            }
+        }
+    }
 }
 
 function appendCapturedWorldInfoListCalls(state, list, appendCalls, appendOverride = null) {

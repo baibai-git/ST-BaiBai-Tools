@@ -1,6 +1,7 @@
 import { t } from '@sillytavern/scripts/i18n';
 import { promptManager } from '@sillytavern/scripts/openai';
 import { INJECTION_POSITION } from '@sillytavern/scripts/PromptManager';
+import { isMobile } from '@sillytavern/scripts/RossAscends-mods';
 import { FORCE_EDIT_PROMPTS, FORCE_TOGGLE_PROMPTS, PRESET_EFFECTIVE_TOKEN_HEADER_CLASS, PRESET_EFFECTIVE_TOKEN_HEADER_TITLE, PRESET_PROMPT_MANAGER_LIST_SELECTOR, PRESET_VUE_EMPTY_INSERT_THRESHOLD_PX, PRESET_VUE_FAVORITES_ENTRY_ID, PRESET_VUE_GROUP_CHILD_DRAGGABLE_CLASS, PRESET_VUE_HEADER_ENTRY_ID, PRESET_VUE_SEPARATOR_ENTRY_ID, PRESET_VUE_TOP_LEVEL_DRAGGABLE_CLASS, PRESET_VUE_TOP_LEVEL_DRAGGABLE_SELECTOR } from './constants.js';
 import { getCurrentPresetPromptFavoritesState, isCurrentPresetPromptFavorite, renderPresetVuePromptFavorites } from './favorites.js';
 import { renderPresetVuePromptGlobalLibrary } from './globalLibrary.js';
@@ -214,7 +215,8 @@ function renderPresetVuePromptDraggable(h, vueDraggableNext, model) {
         class: [
             model.listClassName,
             dragLocked ? 'bai-bai-preset-drag-locked' : '',
-            handleSelector === '.drag-handle' && !dragLocked ? 'bai-bai-preset-drag-handle-visible' : 'bai-bai-preset-drag-handle-hidden',
+            // 手机上显示手柄:关闭整条拖拽时它是唯一入口,整条拖时按住它能立刻拖、别处要长按。电脑端整行直接拖,不显示。
+            isMobile() && !dragLocked ? 'bai-bai-preset-drag-handle-visible' : 'bai-bai-preset-drag-handle-hidden',
             isPresetVuePromptSearchOpen(model) ? 'bai-bai-preset-search-open' : '',
         ],
         list: model.items,

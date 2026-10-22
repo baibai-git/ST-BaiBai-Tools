@@ -7,6 +7,8 @@
 // 本模块刻意不静态 import 任何酒馆模块，所有数据/函数都在运行时从
 // globalThis.SillyTavern.getContext() 取，以规避版本兼容问题。
 
+import { captureFloorShot, configureFloorShot, downloadBlob } from './floorShot.js';
+
 let settings = {};
 let extensionState = {};
 let LOG_PREFIX = '[FloorDirectory]';
@@ -25,6 +27,7 @@ export function configureFloorDirectory(context = {}) {
     settings = context.settings ?? settings;
     extensionState = context.extensionState ?? extensionState;
     LOG_PREFIX = context.logPrefix ?? LOG_PREFIX;
+    configureFloorShot({ logPrefix: LOG_PREFIX });
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +83,27 @@ function toastSuccess(message) {
         globalThis.toastr.success(message);
     } else {
         console.info(`${LOG_PREFIX} ${message}`);
+    }
+}
+
+function toastInfo(message, options) {
+    if (globalThis.toastr?.info) {
+        globalThis.toastr.info(message, '', options);
+    } else {
+        console.info(`${LOG_PREFIX} ${message}`);
+    }
+}
+
+/** 等下一帧真正画出来：rAF 回调跑在本帧绘制之前，在里面再排的宏任务要等本帧提交之后才执行 */
+function waitForNextPaint() {
+    return new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
+}
+
+function toastWarning(message) {
+    if (globalThis.toastr?.warning) {
+        globalThis.toastr.warning(message);
+    } else {
+        console.warn(`${LOG_PREFIX} ${message}`);
     }
 }
 
@@ -714,6 +738,17 @@ function openFloorDirectoryDialog() {
 
         const actions = document.createElement('div');
         actions.className = 'bai-bai-floor-actions';
+        // 按钮自己的处理器会同步改 innerHTML（回收被点的图标节点），轮到本监听器时
+        // event.target 已脱离文档，closest 认不出按钮；用派发时固化的 composedPath 判断。
+        // 在冒泡阶段拦在行前面，操作栏空白处的点击仍可正常收起。
+        actions.addEventListener('click', event => {
+            const clickedAction = event.composedPath().some(
+                node => node instanceof Element && node.classList.contains('bai-bai-floor-action'),
+            );
+            if (clickedAction) {
+                event.stopPropagation();
+            }
+        });
         const editButton = document.createElement('button');
         editButton.type = 'button';
         editButton.className = 'bai-bai-floor-action';
@@ -725,6 +760,12 @@ function openFloorDirectoryDialog() {
         deleteButton.type = 'button';
         deleteButton.className = 'bai-bai-floor-action bai-bai-floor-action-danger';
         deleteButton.innerHTML = '<i class="fa-solid fa-trash-can"></i><span>删除</span>';
+        // 截图按钮放在最左边:截取该楼层的完整渲染(含酒馆助手前端界面)并下载图片。
+        const shotButton = document.createElement('button');
+        shotButton.type = 'button';
+        shotButton.className = 'bai-bai-floor-action';
+        shotButton.title = '截图并下载该楼层';
+        shotButton.innerHTML = '<i class="fa-solid fa-camera"></i><span>截图</span>';
 
         body.append(detail, actions);
 
@@ -744,7 +785,7 @@ function openFloorDirectoryDialog() {
             detail.style.height = '';
             detail.innerHTML = renderPreviewTextHtml(previewText);
             actions.innerHTML = '';
-            actions.append(hideButton, deleteButton, editButton);
+            actions.append(shotButton, hideButton, deleteButton, editButton);
         };
 
         const enterEdit = () => {
@@ -868,6 +909,44 @@ function openFloorDirectoryDialog() {
                 hideButton.disabled = false;
             }
         });
+        shotButton.addEventListener('click', async () => {
+            const freshCtx = getStContext();
+            if (!freshCtx) {
+                toastError('无法读取聊天上下文，截图失败');
+                return;
+            }
+            if (shotButton.disabled) {
+                return;
+            }
+
+            shotButton.disabled = true;
+            const previousHtml = shotButton.innerHTML;
+            shotButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>截图中</span>';
+            // 截图要等字体/图片/iframe 就绪，可能好几秒，先给个即时反馈。
+            // 提示框不要淡入：淡入靠后续每一帧推进，截图一开始就占住主线程，提示框会一直透明；
+            // 再让出一帧，把提示框和按钮转圈先画出来，然后才开始截图
+            toastInfo(`正在截取第 ${index} 层…`, { showDuration: 0 });
+            try {
+                await waitForNextPaint();
+                const { blob, outcome } = await captureFloorShot(index, freshCtx);
+                downloadBlob(blob, outcome.suggestedName);
+                if (outcome.frontendBlocks > outcome.iframesCaptured) {
+                    const missed = outcome.frontendBlocks - outcome.iframesCaptured;
+                    toastWarning(outcome.floorInDom
+                        ? `截图已保存，但有 ${missed} 个前端界面未渲染，以代码块显示`
+                        : `截图已保存，但楼层未加载到聊天区，${missed} 个前端界面以代码块显示`);
+                } else {
+                    toastSuccess(`第 ${index} 层截图已保存`);
+                }
+            } catch (error) {
+                console.error(`${LOG_PREFIX} capture floor shot failed`, error);
+                toastError(`截图失败：${error?.message ?? error}`);
+            } finally {
+                shotButton.disabled = false;
+                shotButton.innerHTML = previousHtml;
+            }
+        });
+
         deleteButton.addEventListener('click', async () => {
             const freshCtx = getStContext();
             if (!freshCtx) {
