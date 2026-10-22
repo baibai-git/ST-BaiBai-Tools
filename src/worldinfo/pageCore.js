@@ -1,5 +1,7 @@
 import { AutoComplete } from '@sillytavern/scripts/autocomplete/AutoComplete';
 import { WORLD_INFO_CONTENT_TEXTAREA_SELECTOR, WORLD_INFO_DEFERRED_MACROS_DATASET_KEY, WORLD_INFO_DEFERRED_MACROS_VALUE_DATASET_KEY, WORLD_INFO_FLOATING_AUTOCOMPLETE_PATCH_KEY, WORLD_INFO_PAGE_APPEND_PATCH_KEY } from './constants.js';
+import { installWorldInfoEntryVisibility, removeWorldInfoEntryVisibility } from './entryVisibility.js';
+import { installWorldInfoScrollHandlerPatch, restoreWorldInfoScrollHandler } from './scrollPatch.js';
 import { LOG_PREFIX, getWorldInfoPageOptimizationState, settings, toKebabCase } from './state.js';
 
 function applyWorldInfoPageOptimization() {
@@ -15,11 +17,15 @@ function applyWorldInfoPageOptimization() {
     restoreLegacyWorldInfoPageAppendPatch(state);
     installWorldInfoMacroDeferralObserver(state);
     installDeferredMacroActivationListeners(state);
+    installWorldInfoEntryVisibility(state);
+    installWorldInfoScrollHandlerPatch(state);
 
     console.debug(`${LOG_PREFIX} World info page optimization enabled`);
 }
 
 function removeWorldInfoPageOptimization(state = getWorldInfoPageOptimizationState()) {
+    restoreWorldInfoScrollHandler(state);
+    removeWorldInfoEntryVisibility(state);
     restoreDeferredWorldInfoMacroTextareas();
     removeDeferredMacroActivationListeners(state);
     removeWorldInfoMacroDeferralObserver(state);

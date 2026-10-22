@@ -1,5 +1,5 @@
 import { resetScrollHeight } from '@sillytavern/scripts/utils';
-import { WORLD_INFO_DRAWER_ANIMATION_STYLE_ID, WORLD_INFO_DRAWER_HANDLER_KEY, WORLD_INFO_ENTRY_DRAWER_SELECTOR, WORLD_INFO_ENTRY_DRAWER_TOGGLE_SELECTOR } from './constants.js';
+import { WORLD_INFO_DRAWER_ANIMATION_STYLE_ID, WORLD_INFO_DRAWER_HANDLER_KEY, WORLD_INFO_ENTRY_DRAWER_SELECTOR, WORLD_INFO_ENTRY_DRAWER_TOGGLE_SELECTOR, WORLD_INFO_ENTRY_EXPANDED_CLASS } from './constants.js';
 import { extensionState, settings } from './state.js';
 
 function applyWorldInfoDrawerOptimization() {
@@ -88,6 +88,8 @@ function handleWorldInfoDrawerToggleClick(event) {
     const expand = !isWorldInfoDrawerContentExpanded(content);
 
     setWorldInfoDrawerIconExpanded(icon, expand);
+    // 展开的条目不参与 content-visibility,见 entryVisibility.js。
+    drawer.closest('.world_entry')?.classList.toggle(WORLD_INFO_ENTRY_EXPANDED_CLASS, expand);
 
     if (settings.worldInfoListOptimizationEnabled) {
         animateWorldInfoDrawerContent(drawer, content, expand);
@@ -125,10 +127,6 @@ function animateWorldInfoDrawerContent(drawer, content, expand) {
     const state = getWorldInfoDrawerAnimationState(content);
     cancelWorldInfoDrawerAnimation(state);
 
-    if (expand && !content.querySelector(':scope > .world_entry_edit')) {
-        $(drawer).trigger('inline-drawer-toggle');
-    }
-
     content.style.height = '';
     content.style.display = 'block';
     content.classList.add('bai-bai-wi-drawer-motion');
@@ -137,6 +135,7 @@ function animateWorldInfoDrawerContent(drawer, content, expand) {
     if (expand) {
         content.classList.remove('bai-bai-wi-drawer-open', 'bai-bai-wi-drawer-leave');
         content.classList.add('bai-bai-wi-drawer-enter');
+        ensureWorldInfoEntryEditor(drawer, content);
     } else {
         content.classList.remove('bai-bai-wi-drawer-enter');
         content.classList.add('bai-bai-wi-drawer-open');
@@ -169,10 +168,6 @@ function toggleWorldInfoDrawerContentImmediately(drawer, content, expand) {
     const state = content.__baiBaiWorldInfoDrawerAnimation;
     cancelWorldInfoDrawerAnimation(state);
 
-    if (expand && !content.querySelector(':scope > .world_entry_edit')) {
-        $(drawer).trigger('inline-drawer-toggle');
-    }
-
     content.classList.remove('bai-bai-wi-drawer-motion', 'bai-bai-wi-drawer-enter', 'bai-bai-wi-drawer-open', 'bai-bai-wi-drawer-leave');
     content.style.display = expand ? 'block' : 'none';
     content.style.height = '';
@@ -181,7 +176,24 @@ function toggleWorldInfoDrawerContentImmediately(drawer, content, expand) {
         state.phase = expand ? 'expanded' : 'collapsed';
     }
 
+    if (expand) {
+        ensureWorldInfoEntryEditor(drawer, content);
+    }
+
     resetWorldInfoDrawerTextareaHeights(content);
+}
+
+// ST/TT 收到 inline-drawer-toggle 才懒创建条目编辑器。TT ≥2.3.0 按 detail.open 判断开/关,
+// 读不到时看内容是否可见,所以必须在内容显示之后派发。
+function ensureWorldInfoEntryEditor(drawer, content) {
+    if (content.querySelector(':scope > .world_entry_edit')) {
+        return;
+    }
+
+    drawer.dispatchEvent(new CustomEvent('inline-drawer-toggle', {
+        bubbles: true,
+        detail: { open: true },
+    }));
 }
 
 function getWorldInfoDrawerAnimationState(content) {

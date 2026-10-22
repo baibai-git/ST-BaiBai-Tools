@@ -175,8 +175,8 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
 }
 ${hostHandleColumnInflow ? '' : `
 /* 原生布局的手柄绝对定位、按整行高度居中,正好叠在条目名第一个图标上;行一变高(长名字换行、
-   搜索片段)就滑到中间露出来。整行拖或不能拖时手柄没用,直接隐藏;只有它是唯一拖拽入口
-   (手机关闭整条拖拽)时才显示,放进左侧留白并只对齐第一行。全局库条目有自己的手柄,不动。 */
+   搜索片段)就滑到中间露出来。电脑端整行直接拖、或者不能拖时手柄没用,直接隐藏;手机上显示
+   (整条拖时按住它能立刻拖),放进左侧留白并只对齐第一行。全局库条目有自己的手柄,不动。 */
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.bai-bai-preset-drag-handle-hidden li.completion_prompt_manager_prompt:not(.bai-bai-preset-global-library-prompt) > .drag-handle {
     display: none !important;
 }

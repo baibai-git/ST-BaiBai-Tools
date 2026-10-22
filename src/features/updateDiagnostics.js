@@ -132,7 +132,7 @@ async function showExtensionUpdateDiagnosis({ extensionName, isGlobal, responseT
         console.info(`${LOG_PREFIX} Extension update diagnosis`, diagnosis);
 
         if (!hasUserInteracted()) {
-            toastr.error('点这里看原因和解决办法。', `${extensionName} 更新失败`, {
+            toastr.error('点这里看原因和解决办法。', `${getExtensionDisplayName(extensionName)} 更新失败`, {
                 timeOut: 10_000,
                 onclick: () => openDiagnosisPopup(diagnosis),
             });
@@ -191,13 +191,12 @@ async function diagnoseExtensionUpdateFailure({ extensionName, isGlobal, respons
         }
     }
 
-    let conclusion = buildUpdateDiagnosisConclusion(diagnosis);
-    if (conclusion.checkBaibaoku) {
+    // 连得上酒馆后台才查得了柏宝库装没装
+    if (diagnosis.versionError?.status !== 0) {
         diagnosis.baibaoku = await detectBaibaokuState();
-        conclusion = buildUpdateDiagnosisConclusion(diagnosis);
     }
 
-    diagnosis.conclusion = conclusion;
+    diagnosis.conclusion = buildUpdateDiagnosisConclusion(diagnosis);
     return diagnosis;
 }
 
@@ -245,29 +244,40 @@ function createAbortSignalWithTimeout(timeoutMs) {
     return controller.signal;
 }
 
-const REINSTALL_ACTION = '删除这个扩展,再用「安装扩展」重新装一次就好。';
+const REINSTALL_ACTION = '删掉这个扩展,重新装一次就好。';
+const INSTALL_BAIBAOKU_ACTION = '推荐按照帖子里的说明安装一下柏宝库。';
 
 // 连不上 GitHub 时柏宝库能自动换线路,按柏宝库的状态给办法
 const NETWORK_ACTIONS = {
-    off: '到柏宝箱的「柏宝库」页打开「插件安装优化」,再点一次更新,柏宝库会自动换能连上的线路。',
-    outdated: '你的柏宝库版本太旧,接管不了更新。请重启酒馆后台(不是刷新网页)让柏宝库自动更新,再点一次更新;重启后还是这样,就删除柏宝库重新安装。',
-    missing: '装上柏宝库(安装方法见帖子)再点一次更新,柏宝库会自动换能连上的线路。',
+    off: '到柏宝箱的「柏宝库」页打开「插件安装优化」,再更新一次。',
+    outdated: '柏宝库版本太旧,重启酒馆后台(不是刷新网页)让它自动更新,再更新一次;还不行就删掉柏宝库重新安装。',
 };
 
 function buildUpdateDiagnosisConclusion(diagnosis) {
+    const conclusion = buildUpdateFailureConclusion(diagnosis);
+
+    // 没装柏宝库时不管什么原因都只推荐装它:装上后由它接管更新,出错时它会说清楚怎么办。
+    if (diagnosis.baibaoku === 'missing') {
+        conclusion.action = INSTALL_BAIBAOKU_ACTION;
+    }
+
+    return conclusion;
+}
+
+function buildUpdateFailureConclusion(diagnosis) {
     const { version, versionError, branches } = diagnosis;
 
     // /version 成功:仓库、远端分支、git fetch 全都没问题,失败只能发生在 git pull 阶段。
     if (!versionError) {
         if (!version?.currentBranchName && !version?.currentCommitHash) {
             return {
-                reason: '这个扩展不是用酒馆「安装扩展」装的(比如解压复制进来的),酒馆没法更新它。',
+                reason: '因为这个扩展不是用酒馆装的,更新失败。',
                 action: REINSTALL_ACTION,
             };
         }
 
         return {
-            reason: '你本地的这份扩展和新版本对不上,没法直接更新。',
+            reason: '因为本地文件和新版本对不上,更新失败。',
             action: REINSTALL_ACTION,
         };
     }
@@ -277,7 +287,7 @@ function buildUpdateDiagnosisConclusion(diagnosis) {
         const localBranch = branches.find(branch => branch?.current)?.name || '';
         if (localBranch && !branches.some(branch => branch?.name === `origin/${localBranch}`)) {
             return {
-                reason: '扩展作者把你在用的分支删了或改了名,酒馆找不到更新。',
+                reason: '因为作者删了你在用的分支,更新失败。',
                 action: REINSTALL_ACTION,
             };
         }
@@ -285,26 +295,30 @@ function buildUpdateDiagnosisConclusion(diagnosis) {
 
     if (versionError.status === 0) {
         return {
-            reason: '网页连不上酒馆后台(可能正在重启或已经关了)。',
-            action: '确认酒馆后台还开着,刷新网页后再点一次更新。',
+            reason: '因为连不上酒馆后台,更新失败。',
+            action: '确认酒馆后台还开着,刷新网页再更新一次。',
         };
     }
 
     // 其余情况:酒馆接口能通,但酒馆后台的 git 连不上 GitHub。
     return {
-        reason: '酒馆后台连不上 GitHub,下载不了新版本。',
-        action: NETWORK_ACTIONS[diagnosis.baibaoku] ?? '过一会儿再点一次更新。',
-        checkBaibaoku: true,
+        reason: '因为网络问题,更新失败。',
+        action: NETWORK_ACTIONS[diagnosis.baibaoku] ?? '过一会儿再更新一次。',
     };
 }
 
 function renderUpdateDiagnosisHtml(diagnosis) {
     const { conclusion } = diagnosis;
     return `
-        <h3>${escapeHtml(diagnosis.extensionName)} 更新失败</h3>
-        <p><b>原因:</b>${escapeHtml(conclusion.reason)}</p>
-        <p><b>怎么办:</b>${escapeHtml(conclusion.action)}</p>
+        <h3>${escapeHtml(getExtensionDisplayName(diagnosis.extensionName))}</h3>
+        <p>${escapeHtml(conclusion.reason)}</p>
+        <p>${escapeHtml(conclusion.action)}</p>
     `;
+}
+
+// 酒馆发更新请求时把 'third-party/名字' 去掉前缀成了 '/名字',显示时把开头这段去掉
+function getExtensionDisplayName(extensionName) {
+    return String(extensionName ?? '').replace(/^(third-party)?\/+/, '');
 }
 
 async function readResponseTextSafe(response) {
