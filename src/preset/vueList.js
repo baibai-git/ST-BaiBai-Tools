@@ -787,6 +787,12 @@ function createPresetVuePromptListModel() {
             endId: null,
             hoverId: null,
         },
+        search: {
+            open: false,
+            query: '',
+            revision: 0,
+            collapsedGroups: {},
+        },
     };
 }
 
@@ -805,6 +811,12 @@ function syncPresetVuePromptListManagerState() {
     if (renderSignature && manager.lastSyncSignature === renderSignature) {
         syncPresetVueGlobalLibrarySelectionState(manager.state);
         manager.lastStructureSignature = structureSignature;
+
+        // 签名不含条目内容:搜索过滤中要让编辑过内容的条目按新内容重新匹配。
+        if (manager.state.search?.open && manager.state.search.query) {
+            manager.state.search.revision += 1;
+        }
+
         return true;
     }
 
@@ -918,12 +930,19 @@ function rebuildPresetVuePromptListDraggable() {
     return true;
 }
 
-function isPresetVuePromptDragLocked() {
+function isPresetVuePromptDragLockSettingEnabled() {
     return settings.presetVueDragLocked === true;
 }
 
+function isPresetVuePromptDragLocked() {
+    // 搜索框里有关键词时列表只显示部分条目,拖拽落点会有歧义,临时视同锁定(不改用户设置)。
+    // 这个临时锁不重建 draggable(会打断输入),靠 Sortable 的 filter 和 move/put 检查动态拦住。
+    const search = getPresetVuePromptListManagerState().state?.search;
+    return isPresetVuePromptDragLockSettingEnabled() || Boolean(search?.open && String(search.query ?? '').trim());
+}
+
 function togglePresetVuePromptDragLocked() {
-    const nextLocked = !isPresetVuePromptDragLocked();
+    const nextLocked = settings.presetVueDragLocked !== true;
     settings.presetVueDragLocked = nextLocked;
 
     if (nextLocked) {
@@ -1199,6 +1218,7 @@ export {
     installPresetVuePromptListRenderPatch,
     invalidatePresetVuePromptListGapCache,
     isPresetPromptDisabledByGroupGate,
+    isPresetVuePromptDragLockSettingEnabled,
     isPresetVuePromptDragLocked,
     isPresetVuePromptGroupBodyMounted,
     isPresetVuePromptListDragging,

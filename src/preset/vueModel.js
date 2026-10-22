@@ -4,6 +4,7 @@ import { uuidv4 } from '@sillytavern/scripts/utils';
 import { refreshPromptManagerTokensDebounced } from './constants.js';
 import { getPresetPromptGroupState, normalizePresetPromptGroupState, savePresetPromptGroupSettings } from './groupState.js';
 import { removeUnusedPresetPromptGroups } from './pendingChanges.js';
+import { closePresetVuePromptSearch, isPresetVuePromptSearchFiltering, isPresetVuePromptSearchOpen, togglePresetVuePromptSearchGroupCollapsed } from './search.js';
 import { updatePresetEffectiveTokenHeaderDisplay } from './switchFast.js';
 import { clearPresetVuePromptGroupBodyUnmountTimer, getPresetVuePromptListManagerState, runPresetVuePromptBodyHeightTransition, schedulePresetVuePromptGroupBodyUnmount, setPresetVuePromptGroupBodyMounted, syncPresetVuePromptListManagerState } from './vueList.js';
 
@@ -18,6 +19,11 @@ async function startPresetVuePromptGroupRangeSelection(model, { startId = null }
     if (startId && !promptIds.includes(startId)) {
         toastr.warning(t`不能将这个预设条目作为分组起点。`);
         return;
+    }
+
+    // 选分组范围要看完整列表,搜索开着就先退出;从某个条目发起时让它停在原处。
+    if (isPresetVuePromptSearchOpen(model)) {
+        closePresetVuePromptSearch({ revealPromptId: startId });
     }
 
     model.rangeSelection = {
@@ -323,6 +329,12 @@ function getPresetVuePromptRangeClasses(model, item) {
 }
 
 function togglePresetVuePromptGroupCollapsed(groupId) {
+    // 搜索过滤时分组是临时展开的,这里也只临时收起/展开结果里的这一组,不写回折叠设置,免得退出搜索后和原状态对不上。
+    if (isPresetVuePromptSearchFiltering()) {
+        togglePresetVuePromptSearchGroupCollapsed(groupId);
+        return;
+    }
+
     const groupState = getPresetPromptGroupState();
     const group = groupState.groups.find(group => group.id === groupId);
 

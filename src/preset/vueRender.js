@@ -1,17 +1,18 @@
 import { t } from '@sillytavern/scripts/i18n';
 import { promptManager } from '@sillytavern/scripts/openai';
 import { INJECTION_POSITION } from '@sillytavern/scripts/PromptManager';
-import { FORCE_EDIT_PROMPTS, FORCE_TOGGLE_PROMPTS, PRESET_DRAG_INTERACTIVE_SELECTOR, PRESET_EFFECTIVE_TOKEN_HEADER_CLASS, PRESET_EFFECTIVE_TOKEN_HEADER_TITLE, PRESET_PROMPT_MANAGER_LIST_SELECTOR, PRESET_VUE_EMPTY_INSERT_THRESHOLD_PX, PRESET_VUE_FAVORITES_ENTRY_ID, PRESET_VUE_GROUP_CHILD_DRAGGABLE_CLASS, PRESET_VUE_HEADER_ENTRY_ID, PRESET_VUE_SEPARATOR_ENTRY_ID, PRESET_VUE_TOP_LEVEL_DRAGGABLE_CLASS, PRESET_VUE_TOP_LEVEL_DRAGGABLE_SELECTOR } from './constants.js';
+import { FORCE_EDIT_PROMPTS, FORCE_TOGGLE_PROMPTS, PRESET_EFFECTIVE_TOKEN_HEADER_CLASS, PRESET_EFFECTIVE_TOKEN_HEADER_TITLE, PRESET_PROMPT_MANAGER_LIST_SELECTOR, PRESET_VUE_EMPTY_INSERT_THRESHOLD_PX, PRESET_VUE_FAVORITES_ENTRY_ID, PRESET_VUE_GROUP_CHILD_DRAGGABLE_CLASS, PRESET_VUE_HEADER_ENTRY_ID, PRESET_VUE_SEPARATOR_ENTRY_ID, PRESET_VUE_TOP_LEVEL_DRAGGABLE_CLASS, PRESET_VUE_TOP_LEVEL_DRAGGABLE_SELECTOR } from './constants.js';
 import { getCurrentPresetPromptFavoritesState, isCurrentPresetPromptFavorite, renderPresetVuePromptFavorites } from './favorites.js';
 import { renderPresetVuePromptGlobalLibrary } from './globalLibrary.js';
 import { getPresetPromptGroupState, normalizePresetPromptGroupState } from './groupState.js';
 import { closePresetPromptActionMenus, handlePresetPromptActionButtonClick, togglePresetPromptActionMenu } from './listActions.js';
 import { schedulePresetVuePromptOrderSaveAfterDrop } from './pendingChanges.js';
+import { getPresetVuePromptSearchView, isPresetVuePromptSearchFiltering, isPresetVuePromptSearchGroupCollapsed, isPresetVuePromptSearchOpen, renderPresetVuePromptSearchBar, renderPresetVuePromptSearchHighlight, renderPresetVuePromptSearchSnippet, renderPresetVuePromptSearchToggle } from './search.js';
 import { settings } from './state.js';
 import { calculatePresetEffectivePromptTokenTotal, formatPresetEffectiveTokenHeaderText, getPromptImportantClass, getPromptTokenWarning } from './switchFast.js';
 import { isPresetGroupingEnabled } from './util.js';
-import { applyPresetVueDragGestureOptions, beginPresetVuePromptGroupHeaderGesture, beginPresetVuePromptManualDrag, canPutPresetVuePromptIntoGroupList, canPutPresetVuePromptIntoTopLevelList, cancelPresetVuePromptGroupHeaderGesture, consumePresetVuePromptDragChange, finishPresetVuePromptGroupHeaderGesture, finishPresetVuePromptManualDrag, getPresetVuePromptDragHandleSelector, handlePresetVuePromptGroupHeaderClickFallback, isPresetVuePromptGroupDragMoveAllowed, isPresetVuePromptTopLevelDragMoveAllowed, movePresetVuePromptGroupHeaderGesture, renderPresetVuePromptGroupBody, setPresetVuePromptDragging } from './vueDrag.js';
-import { getPresetVuePromptListManagerState, isPresetVuePromptDragLocked, togglePresetVuePromptDragLocked } from './vueList.js';
+import { applyPresetVueDragGestureOptions, beginPresetVuePromptGroupHeaderGesture, beginPresetVuePromptManualDrag, canPutPresetVuePromptIntoGroupList, canPutPresetVuePromptIntoTopLevelList, cancelPresetVuePromptGroupHeaderGesture, consumePresetVuePromptDragChange, finishPresetVuePromptGroupHeaderGesture, finishPresetVuePromptManualDrag, getPresetVuePromptDragHandleSelector, handlePresetVuePromptGroupHeaderClickFallback, isPresetVuePromptDragStartFiltered, isPresetVuePromptGroupDragMoveAllowed, isPresetVuePromptTopLevelDragMoveAllowed, movePresetVuePromptGroupHeaderGesture, renderPresetVuePromptGroupBody, setPresetVuePromptDragging } from './vueDrag.js';
+import { getPresetVuePromptListManagerState, isPresetVuePromptDragLockSettingEnabled, isPresetVuePromptDragLocked, togglePresetVuePromptDragLocked } from './vueList.js';
 import { cancelPresetVuePromptGroupRangeSelection, deletePresetVuePromptGroup, getPresetVuePromptRangeClasses, handlePresetVuePromptRangeSelectionClick, renamePresetVuePromptGroup, startPresetVuePromptGroupRangeSelection, togglePresetVuePromptGroupCollapsed, togglePresetVuePromptGroupEnabled, updatePresetVuePromptRangeSelectionHover } from './vueModel.js';
 
 function buildPresetVuePromptListItems() {
@@ -136,14 +137,23 @@ function createPresetVuePromptListRootComponent(vue, vueDraggableNext, model) {
 function renderPresetVuePromptListHeader(h, model) {
     const prefix = promptManager?.configuration?.prefix ?? '';
     const selecting = Boolean(model?.rangeSelection?.active);
-    const dragLocked = isPresetVuePromptDragLocked();
+    // 锁按钮只反映用户自己的设置;搜索筛选时的临时暂停拖拽不算锁定。
+    const dragLocked = isPresetVuePromptDragLockSettingEnabled();
+    const searchOpen = isPresetVuePromptSearchOpen(model);
 
-    return h('li', { class: `${prefix}prompt_manager_list_head`, key: 'header' }, [
+    return h('li', {
+        class: [
+            `${prefix}prompt_manager_list_head`,
+            searchOpen ? 'bai-bai-preset-list-head-searching' : '',
+        ],
+        key: 'header',
+    }, [
         h('span', {
             class: PRESET_EFFECTIVE_TOKEN_HEADER_CLASS,
             title: PRESET_EFFECTIVE_TOKEN_HEADER_TITLE,
         }, formatPresetEffectiveTokenHeaderText(calculatePresetEffectivePromptTokenTotal())),
         h('span', { class: 'bai-bai-preset-list-head-actions' }, [
+            renderPresetVuePromptSearchToggle(h, model),
             selecting
                 ? h('span', {
                     class: 'menu_button fa-solid fa-xmark',
@@ -180,6 +190,7 @@ function renderPresetVuePromptListHeader(h, model) {
                 },
             }),
         ]),
+        ...(searchOpen ? renderPresetVuePromptSearchBar(h, model) : []),
     ]);
 }
 
@@ -193,15 +204,18 @@ function renderPresetVuePromptListSeparator(h) {
 
 function renderPresetVuePromptDraggable(h, vueDraggableNext, model) {
     const handleSelector = getPresetVuePromptDragHandleSelector();
+    // Sortable 配置只在重建时生效,这里只放用户的锁定设置;搜索筛选、分组选择这类临时锁定
+    // 由 filter 动态拦住(打字时重建会打断输入)。dragLocked 含临时锁定,只用于样式。
     const dragLocked = isPresetVuePromptDragLocked();
-    const rangeSelecting = Boolean(model?.rangeSelection?.active);
-    const dragDisabled = dragLocked || rangeSelecting;
+    const dragDisabled = isPresetVuePromptDragLockSettingEnabled();
     const draggableProps = {
         tag: 'ul',
         id: PRESET_PROMPT_MANAGER_LIST_SELECTOR.slice(1),
         class: [
             model.listClassName,
             dragLocked ? 'bai-bai-preset-drag-locked' : '',
+            handleSelector === '.drag-handle' && !dragLocked ? 'bai-bai-preset-drag-handle-visible' : 'bai-bai-preset-drag-handle-hidden',
+            isPresetVuePromptSearchOpen(model) ? 'bai-bai-preset-search-open' : '',
         ],
         list: model.items,
         group: {
@@ -210,7 +224,7 @@ function renderPresetVuePromptDraggable(h, vueDraggableNext, model) {
             put: dragDisabled ? false : canPutPresetVuePromptIntoTopLevelList,
         },
         draggable: PRESET_VUE_TOP_LEVEL_DRAGGABLE_SELECTOR,
-        filter: PRESET_DRAG_INTERACTIVE_SELECTOR,
+        filter: isPresetVuePromptDragStartFiltered,
         preventOnFilter: false,
         sort: false,
         disabled: dragDisabled,
@@ -270,7 +284,8 @@ function renderPresetVuePromptEntry(h, vueDraggableNext, item) {
     }
 
     if (item?.type === 'favorites') {
-        return renderPresetVuePromptFavorites(h, item);
+        // 收藏区是原条目的镜像,搜索过滤时会重复命中,先整块藏起来。
+        return isPresetVuePromptSearchFiltering() ? null : renderPresetVuePromptFavorites(h, item);
     }
 
     if (item?.type === 'group') {
@@ -283,9 +298,13 @@ function renderPresetVuePromptEntry(h, vueDraggableNext, item) {
 function renderPresetVuePromptGroup(h, vueDraggableNext, item) {
     const handleSelector = getPresetVuePromptDragHandleSelector();
     const groupEnabled = isPresetVuePromptGroupEnabled(item);
-    const dragLocked = isPresetVuePromptDragLocked();
-    const rangeSelecting = Boolean(getPresetVuePromptListManagerState().state?.rangeSelection?.active);
-    const dragDisabled = dragLocked || rangeSelecting;
+    // 和主列表一样,配置里只放用户的锁定设置,临时锁定由 filter 动态拦。
+    const dragDisabled = isPresetVuePromptDragLockSettingEnabled();
+    const model = getPresetVuePromptListManagerState().state;
+    const searchView = getPresetVuePromptSearchView(model);
+    const searchGroup = searchView?.groups.get(item.groupId) ?? null;
+    // 搜索过滤时有命中的组临时展开(在结果里手动收起的除外),只用于渲染,不写回折叠设置。
+    const collapsed = searchGroup?.visible ? isPresetVuePromptSearchGroupCollapsed(model, item.groupId) : item.collapsed;
     const draggableProps = {
         tag: 'ul',
         class: [
@@ -299,7 +318,7 @@ function renderPresetVuePromptGroup(h, vueDraggableNext, item) {
             put: dragDisabled ? false : canPutPresetVuePromptIntoGroupList,
         },
         draggable: 'li.completion_prompt_manager_prompt_draggable',
-        filter: PRESET_DRAG_INTERACTIVE_SELECTOR,
+        filter: isPresetVuePromptDragStartFiltered,
         preventOnFilter: false,
         sort: false,
         disabled: dragDisabled,
@@ -344,8 +363,9 @@ function renderPresetVuePromptGroup(h, vueDraggableNext, item) {
         class: [
             PRESET_VUE_TOP_LEVEL_DRAGGABLE_CLASS,
             'bai-bai-preset-group',
-            item.collapsed ? 'bai-bai-preset-group-collapsed' : '',
+            collapsed ? 'bai-bai-preset-group-collapsed' : '',
             groupEnabled ? '' : 'bai-bai-preset-group-powered-off',
+            searchView && !searchGroup?.visible ? 'bai-bai-preset-search-miss' : '',
         ],
         'data-preset-group-id': item.groupId,
         key: item.id,
@@ -366,7 +386,7 @@ function renderPresetVuePromptGroup(h, vueDraggableNext, item) {
                         'fa-solid',
                         'fa-chevron-down',
                     ],
-                    title: item.collapsed ? t`展开分组` : t`收起分组`,
+                    title: collapsed ? t`展开分组` : t`收起分组`,
                     onClick: event => {
                         event.preventDefault();
                         event.stopPropagation();
@@ -374,7 +394,7 @@ function renderPresetVuePromptGroup(h, vueDraggableNext, item) {
                     },
                 }),
                 h('span', { class: 'bai-bai-preset-group-title-content' }, [
-                    h('strong', null, item.name),
+                    h('strong', null, searchGroup?.nameHit ? renderPresetVuePromptSearchHighlight(h, item.name, searchView) : item.name),
                     h('small', { class: 'bai-bai-preset-group-count' }, formatPresetVuePromptGroupCount(item)),
                 ]),
             ]),
@@ -414,7 +434,7 @@ function renderPresetVuePromptGroup(h, vueDraggableNext, item) {
                 }),
             ]),
         ]),
-        renderPresetVuePromptGroupBody(h, vueDraggableNext, item, draggableProps),
+        renderPresetVuePromptGroupBody(h, vueDraggableNext, collapsed === item.collapsed ? item : { ...item, collapsed }, draggableProps),
     ]);
 }
 
@@ -437,6 +457,8 @@ function renderPresetVuePromptRow(h, item, { topLevel = false, groupChild = fals
     const importantClass = getPromptImportantClass(prompt, prefix);
     const manager = getPresetVuePromptListManagerState();
     const rangeClasses = favoriteMirror ? [] : getPresetVuePromptRangeClasses(manager.state, item);
+    const searchView = favoriteMirror ? null : getPresetVuePromptSearchView(manager.state);
+    const searchRow = searchView?.rows.get(prompt.identifier) ?? null;
 
     return h('li', {
         class: [
@@ -448,6 +470,7 @@ function renderPresetVuePromptRow(h, item, { topLevel = false, groupChild = fals
             markerClass,
             importantClass,
             ...rangeClasses,
+            searchView && !searchRow?.visible ? 'bai-bai-preset-search-miss' : '',
         ],
         'data-pm-identifier': prompt.identifier,
         'data-preset-group-id': item.groupId || '',
@@ -463,7 +486,10 @@ function renderPresetVuePromptRow(h, item, { topLevel = false, groupChild = fals
                 title: t`收藏快捷项不可拖拽`,
             }, '\u2630')
             : h('span', { class: 'drag-handle ui-sortable-handle' }, '\u2630'),
-        renderPresetVuePromptNameCell(h, prompt, prefix, { allowInspect: !favoriteMirror }),
+        renderPresetVuePromptNameCell(h, prompt, prefix, {
+            allowInspect: !favoriteMirror,
+            searchView: searchRow?.nameHit ? searchView : null,
+        }),
         h('span', null, [
             h('span', { class: 'prompt_manager_prompt_controls' }, renderPresetVuePromptControls(h, prompt, item, { favoriteMirror })),
         ]),
@@ -477,11 +503,13 @@ function renderPresetVuePromptRow(h, item, { topLevel = false, groupChild = fals
             }, ' '),
             item.calculatedTokens,
         ]),
+        searchRow?.snippet ? renderPresetVuePromptSearchSnippet(h, searchRow.snippet) : null,
     ]);
 }
 
-function renderPresetVuePromptNameCell(h, prompt, prefix, { allowInspect = true } = {}) {
+function renderPresetVuePromptNameCell(h, prompt, prefix, { allowInspect = true, searchView = null } = {}) {
     const promptName = prompt.name ?? '';
+    const nameContent = searchView ? renderPresetVuePromptSearchHighlight(h, promptName, searchView) : promptName;
     const isMarkerPrompt = prompt.marker && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE;
     const isSystemPrompt = !prompt.marker && prompt.system_prompt && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE && !prompt.forbid_overrides;
     const isImportantPrompt = !prompt.marker && prompt.system_prompt && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE && prompt.forbid_overrides;
@@ -504,11 +532,11 @@ function renderPresetVuePromptNameCell(h, prompt, prefix, { allowInspect = true 
 
     const canInspect = promptManager.isPromptInspectionAllowed?.(prompt);
     children.push(allowInspect && canInspect
-        ? h('a', { title: promptName, class: 'prompt-manager-inspect-action' }, promptName)
+        ? h('a', { title: promptName, class: 'prompt-manager-inspect-action' }, nameContent)
         : h('span', {
             title: promptName,
             class: canInspect ? 'prompt-manager-inspect-action bai-bai-preset-prompt-name-visual-only' : '',
-        }, promptName));
+        }, nameContent));
 
     if (role) {
         children.push(' ', h('span', {
