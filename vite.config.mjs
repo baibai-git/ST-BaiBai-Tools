@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import vue from '@vitejs/plugin-vue';
 import { defineConfig } from 'vite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,6 +28,8 @@ const package_version = String(package_json.version ?? '');
 export default defineConfig(({ mode }) => ({
   define: {
     __BBT_VERSION__: JSON.stringify(package_version),
+    // 内置柏宝砚(src/pen)沿用的版本常量,随柏宝箱版本走
+    __BBY_VERSION__: JSON.stringify(package_version),
     'process.env.NODE_ENV': JSON.stringify(mode === 'production' ? 'production' : 'development'),
     __VUE_OPTIONS_API__: 'true',
     __VUE_PROD_DEVTOOLS__: 'false',
@@ -34,6 +37,7 @@ export default defineConfig(({ mode }) => ({
   },
 
   plugins: [
+    vue(),
     {
       name: 'sillytavern-resolver',
       enforce: 'pre',
@@ -53,6 +57,17 @@ export default defineConfig(({ mode }) => ({
       },
     },
   ],
+
+  resolve: {
+    alias: {
+      // 内置柏宝砚的源码根;刻意不用宽泛的 `@`,免得和柏宝箱其他模块混淆
+      '@pen': path.resolve(__dirname, 'src/pen'),
+    },
+  },
+
+  test: {
+    include: ['src/pen/**/*.test.ts'],
+  },
 
   build: {
     rollupOptions: {

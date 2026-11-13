@@ -2,7 +2,7 @@
 
 柏宝箱是一个 SillyTavern 第三方扩展，主要用来缓解移动端、长聊天、海量角色/正则/预设场景下的卡顿。它会在不改变 SillyTavern 原有使用方式的前提下，接管部分高开销的列表渲染、接口请求、编辑器和滚动行为。
 
-当前版本：`1.1.5`
+当前版本：`1.2.0`
 
 ## 功能总览
 
@@ -61,6 +61,7 @@
 - `禁止输入法自动弹出`：进入聊天、打开聊天文件管理、进入楼层编辑时拦截程序自动聚焦，手动点击输入框仍然可用。
 - `编辑楼层时禁用自动滚动`：抑制移动端键盘挤压布局造成的聊天区滚动补偿。
 - `双击编辑楼层` / `三击编辑楼层`：快速打开消息编辑器，两个开关互斥。
+- `新版楼层管理器`（默认开启）：魔法棒「楼层管理器」打开内置柏宝砚，可按全部 / 角色 / 用户 / 隐藏筛选楼层，切换最新在前或最早在前，每页 20 楼、可首页/末页或点页码直接跳转，隐藏、删除、截图，手动修改整楼或用 AI 标注改写（楼层里的思维链和草稿默认收起：除了 `<think>` 等标签，勾了「仅格式显示」且替换成空或 `<details>` 折叠的正则所匹配的整行也会收起，跟聊天里看到的一致；只影响显示，工作台顶部可随时切换）；编辑楼层时多一个 AI 改写按钮；砚的设置里可打开屏幕悬浮球（默认关，可拖动、贴边，点一下打开楼层管理器）。关闭后用旧版楼层管理器。已装独立版柏宝砚时由独立版提供，这里用旧版。
 
 ### 聊天保存请求 Gzip 压缩
 
@@ -261,7 +262,9 @@ public/scripts/extensions/third-party/SillyTavern-Mobile-Resize-Guard
 npm install
 npm run build        # 生产构建（含 sourcemap 与压缩）
 npm run watch        # 开发监听构建
-npx eslint src       # 静态检查(no-undef 等)
+npx eslint src       # 静态检查(no-undef 等;只覆盖 JS)
+npm run test:pen     # 内置柏宝砚的 Vitest 测试
+npm run typecheck:pen  # 内置柏宝砚的 Vue/TS 类型检查
 ```
 
 源码目录结构：
@@ -273,12 +276,16 @@ src/
   preset/                 预设优化(原 presetOptimizations.js 拆分,index.js 为公共出口)
   chat/                   聊天优化(原 chatOptimizations.js 拆分)
   worldinfo/              世界书页面优化(原 worldInfoPageOptimization.js 拆分)
-  floorDirectory.js       楼层管理器
+  floorManager.js         楼层管理器调度:「新版楼层管理器」开关、独立版柏宝砚检测
+  floorDirectory.js       旧版楼层管理器(魔法棒入口也由它注入,新旧版共用)
+  pen/                    内置柏宝砚(新版楼层管理器,Vue + TS,别名 @pen;含截图 st/floorShot.ts)
   saveGenerateDisplay.js  后台生成展示组件
   settings.html           设置面板模板(构建时经 ?raw 内联)
 ```
 
-宿主 SillyTavern 模块通过 `@sillytavern/*` 别名引用（如 `@sillytavern/script`、`@sillytavern/scripts/utils`），构建时解析为相对路径并保持 external，不会被打进产物。Vue、vue-draggable-next 与 CodeMirror 由 npm 依赖打包，全部内联进单个 `dist/index.js`（云端/高延迟环境下单个大文件比多个懒加载 chunk 加载更快）。
+宿主 SillyTavern 模块通过 `@sillytavern/*` 别名引用（如 `@sillytavern/script`、`@sillytavern/scripts/utils`），构建时解析为相对路径并保持 external，不会被打进产物。Vue、vue-draggable-next 与 CodeMirror 由 npm 依赖打包，全部内联进单个 `dist/index.js`（云端/高延迟环境下单个大文件比多个懒加载 chunk 加载更快）。唯一例外是 `dist/index.css`：内置柏宝砚的样式，第一次打开新版楼层管理器时由 Shadow Root 里的 `<link>` 加载，不进酒馆全局样式。
+
+柏宝砚已并入本仓库，以后只在 `src/pen/` 开发，独立仓库 ST-BaiBai-Pen 不再加功能。同时装了独立版（目录名 `ST-BaiBai-Pen` 或 `ST-BaiBai-Inkwell`，且已启用）时内置砚不启动，魔法棒「楼层管理器」打开旧版；两边共用 `extensionSettings.baibai_pen` 与共享渠道，卸载独立版刷新后直接接管。
 
 发版流程：改 `package.json` 的 `version` → `npm run build`（prebuild 自动同步 `manifest.json` 并刷新 `?ver=` 缓存参数）→ 提交 `src/`、`dist/` 与 `manifest.json`。
 

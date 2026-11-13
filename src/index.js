@@ -1,8 +1,8 @@
 // 柏宝箱入口:模块装配与顶层接线(由原 index.js 拆分而来,功能实现在 features/ 下)
 import * as chatOptimizations from './chat/index.js';
-import * as floorDirectory from './floorDirectory.js';
 import * as presetOptimizations from './preset/index.js';
 import * as worldInfoPageOptimization from './worldinfo/index.js';
+import { configureFloorManager, installFloorManager } from './floorManager.js';
 import { DESCRIPTION_CODEMIRROR_HISTORY_MAX_LENGTH, LOG_PREFIX } from './features/constants.js';
 import { loadDescriptionCodeMirrorModules } from './features/descEditor.js';
 import { installExtensionOpsFetchHook } from './features/extensionOps.js';
@@ -41,10 +41,11 @@ worldInfoPageOptimization.configureWorldInfoPageOptimization({
     saveSettings: saveExtensionSettings,
 });
 presetOptimizations.installOpenAITokenizerBulkBridge();
-floorDirectory.configureFloorDirectory({
+configureFloorManager({
     settings,
     extensionState,
     logPrefix: LOG_PREFIX,
+    saveSettings: saveExtensionSettings,
 });
 
 initializeSettings();
@@ -76,4 +77,4 @@ installPageRestoreSelectionGuard();
 chatOptimizations.observeChatManagementPopupCleanup();
 applyFeatureSettings();
 jQuery(renderSettingsPanel);
-jQuery(() => floorDirectory.installFloorDirectory());
+jQuery(installFloorManager);
