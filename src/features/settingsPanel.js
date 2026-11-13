@@ -1,5 +1,6 @@
 import * as chatOptimizations from '../chat/index.js';
 import * as presetOptimizations from '../preset/index.js';
+import { bindFloorManagerSettings } from '../floorManager.js';
 import { bindPresetBackupRetentionSettings } from '../preset/backupRetention.js';
 import settingsTemplateHtml from '../settings.html?raw';
 import * as worldInfoPageOptimization from '../worldinfo/index.js';
@@ -356,6 +357,7 @@ async function renderSettingsPanel() {
 
     chatOptimizations.bindChatOptimizationSettings({ saveSettings: saveExtensionSettings });
     bindGenerateRetrySettings({ saveSettings: saveExtensionSettings });
+    bindFloorManagerSettings();
     bindGenerateBlacklistRetrySettings({ saveSettings: saveExtensionSettings });
 
     $('#bai_bai_toolkit_save_request_gzip_enabled')

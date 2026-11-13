@@ -1,3 +1,4 @@
+import { fetchBaibaokuStatus } from '../features/baibaokuPanel.js';
 import { t } from '@sillytavern/scripts/i18n';
 import { promptManager } from '@sillytavern/scripts/openai';
 import { uuidv4 } from '@sillytavern/scripts/utils';
@@ -648,7 +649,12 @@ function normalizePresetGlobalPromptLibraryName(name) {
     return String(name || '').trim() || t`未命名条目`;
 }
 
-async function ensureBaiBaoKuBridge() {
+// 柏宝库后端不在时(如 TauriTavern 对 /api/plugins/* 回 200 + 首页 HTML),
+// 直接插 client.js 会把 HTML 当脚本执行、反复刷 SyntaxError。
+// 失败后本页的自动加载不再重试,只有用户手动操作全局库时才重新探测。
+let baibaokuBridgeUnavailable = false;
+
+async function ensureBaiBaoKuBridge({ auto = false } = {}) {
     const existing = globalThis.BaiBaoKu;
 
     if (existing && typeof existing.database === 'function') {
@@ -659,13 +665,42 @@ async function ensureBaiBaoKuBridge() {
         throw new Error('BaiBaoKu frontend bridge is not available.');
     }
 
+    if (auto && baibaokuBridgeUnavailable) {
+        throw new Error('BaiBaoKu backend is not available.');
+    }
+
     const manager = getPresetVuePromptListManagerState();
 
     if (manager.globalLibraryBridgePromise) {
         return manager.globalLibraryBridgePromise;
     }
 
-    manager.globalLibraryBridgePromise = new Promise((resolve, reject) => {
+    manager.globalLibraryBridgePromise = (async () => {
+        try {
+            await fetchBaibaokuStatus();
+        } catch (error) {
+            baibaokuBridgeUnavailable = true;
+            throw new Error(`BaiBaoKu backend is not available: ${error?.message || error}`);
+        }
+
+        return loadBaiBaoKuBridgeScript();
+    })().then(bridge => {
+        baibaokuBridgeUnavailable = false;
+        return bridge;
+    }, error => {
+        baibaokuBridgeUnavailable = true;
+        throw error;
+    }).finally(() => {
+        manager.globalLibraryBridgePromise = null;
+    });
+
+    return manager.globalLibraryBridgePromise;
+}
+
+function loadBaiBaoKuBridgeScript() {
+    document.head.querySelectorAll('script[data-bai-bai-toolkit-baibaoku-client]').forEach(node => node.remove());
+
+    return new Promise((resolve, reject) => {
         let settled = false;
         let timeoutId = null;
 
@@ -703,6 +738,7 @@ async function ensureBaiBaoKuBridge() {
             }
         }, { once: true });
         script.addEventListener('error', () => {
+            script.remove();
             settle(reject, new Error('Failed to load BaiBaoKu frontend bridge.'));
         }, { once: true });
 
@@ -715,19 +751,16 @@ async function ensureBaiBaoKuBridge() {
                 return;
             }
 
+            script.remove();
             settle(reject, new Error('BaiBaoKu frontend bridge timed out.'));
         }, 5000);
 
         document.head.appendChild(script);
-    }).finally(() => {
-        manager.globalLibraryBridgePromise = null;
     });
-
-    return manager.globalLibraryBridgePromise;
 }
 
-async function getPresetGlobalPromptLibraryDatabase() {
-    const bridge = await ensureBaiBaoKuBridge();
+async function getPresetGlobalPromptLibraryDatabase({ auto = false } = {}) {
+    const bridge = await ensureBaiBaoKuBridge({ auto });
 
     if (typeof bridge.isAvailable === 'function' && !await bridge.isAvailable()) {
         throw new Error('BaiBaoKu backend is not available.');
@@ -775,7 +808,7 @@ function pruneGlobalLibrarySelectionToItems(manager = getPresetVuePromptListMana
     }
 }
 
-async function loadPresetGlobalPromptLibrary({ force = false, showLoading = true } = {}) {
+async function loadPresetGlobalPromptLibrary({ force = false, showLoading = true, auto = false } = {}) {
     const manager = getPresetVuePromptListManagerState();
 
     if (!force && manager.globalLibraryLoaded) {
@@ -795,7 +828,7 @@ async function loadPresetGlobalPromptLibrary({ force = false, showLoading = true
 
     manager.globalLibraryLoadPromise = (async () => {
         try {
-            const database = await getPresetGlobalPromptLibraryDatabase();
+            const database = await getPresetGlobalPromptLibraryDatabase({ auto });
             const result = await database.get(PRESET_GLOBAL_LIBRARY_STORE, PRESET_GLOBAL_LIBRARY_KEY);
             const library = normalizePresetGlobalPromptLibrary(result?.exists ? result.value : createEmptyPresetGlobalPromptLibrary());
 

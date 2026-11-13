@@ -5,7 +5,7 @@
 * License: MIT
 */
 /*
-* [bby-patch] 柏宝箱对字体内联 embedCustomFonts(压缩后叫 Me)的本地修改,升级 snapdom 时要重新打上(全文搜 bby-patch):
+* [bby-patch] 柏宝箱/柏宝砚对字体内联 embedCustomFonts(压缩后叫 Me)的本地修改,升级 snapdom 时要重新打上(全文搜 bby-patch):
 * A. <style> 里的 @import 原版会临时注入成 <link> 等加载完再删,只为拿到地址;注入/移除样式表让真实页面
 *    整页重排好几次、已加载的分片字体全部重新下载,截图期间明显卡顿。改为只取地址,直接走文本解析。
 * B. 同源且 CSSOM 可读的 <link> 样式表交给 CSSOM 遍历,不再把它 @import 的几十个文件逐个重新下载。

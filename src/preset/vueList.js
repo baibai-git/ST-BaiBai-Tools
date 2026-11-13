@@ -172,7 +172,7 @@ async function installPresetVuePromptListManager() {
         }
         syncPresetVuePromptListManagerState();
         preparePromptManagerCustomDragList(manager.root, { signature: manager.lastStructureSignature });
-        void loadPresetGlobalPromptLibrary().catch(error => {
+        void loadPresetGlobalPromptLibrary({ auto: true }).catch(error => {
             console.debug(`${LOG_PREFIX} Failed to load preset global prompt library`, error);
         });
     })();
