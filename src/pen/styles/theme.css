@@ -1,0 +1,212 @@
+/*
+ * 主题令牌(design tokens)— 柏宝砚 · 与柏宝书同源:青瓷 × 纸墨
+ * 配色全部取自柏宝书 theme.css,组件不写死颜色,一律从这里取变量。
+ * 切换主题 = 改根节点 [data-theme];未来自定义主题只需新增一套同名变量。
+ */
+
+.bby-root {
+  /* —— 字体:现代无衬线栈,优先国产现代字体,回退系统 —— */
+  --bby-font-sans: 'MiSans', 'HarmonyOS Sans SC', 'PingFang SC', 'Microsoft YaHei',
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', system-ui, sans-serif;
+  --bby-font-mono: 'SF Mono', 'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace;
+
+  /* —— 圆角 —— */
+  --bby-radius-window: 16px;
+  --bby-radius: 10px;
+  --bby-radius-sm: 8px;
+  --bby-radius-pill: 999px;
+
+  /* —— 间距节奏 —— */
+  --bby-gap: 16px;
+  --bby-page-pad: clamp(20px, 4vw, 40px);
+
+  /* —— 尺寸 —— */
+  --bby-win-max-w: 880px;
+  --bby-win-max-h: 82vh;
+
+  /* —— 动效 —— */
+  --bby-duration: 0.28s;
+  --bby-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* ========== 昼 · 象牙白 ==========
+   底色是暖中性象牙白;墨色取深海军蓝(与夜呼应),强调是压暗的金。 */
+.bby-root[data-theme='day'] {
+  --bby-bg: oklch(0.97 0.004 90);
+  /* #f6f5f2 象牙白 */
+  --bby-surface: oklch(1 0 0);
+  /* #ffffff 抬起面/卡片 */
+  --bby-surface-2: oklch(0.945 0.006 90);
+  /* #eeede8 次级面/输入框 */
+  --bby-ink: oklch(0.252 0.056 264);
+  /* #14213d 海军蓝墨 · 主文字 */
+  --bby-ink-soft: oklch(0.46 0.04 264);
+  /* #4d586f 次级文字 */
+  --bby-ink-muted: oklch(0.62 0.03 264);
+  /* #7d8699 弱化/占位 */
+  --bby-accent: oklch(0.57 0.13 62);
+  /* #ac6304 深金 · 强调(白字 AA) */
+  --bby-accent-soft: oklch(0.57 0.13 62 / 0.12);
+  --bby-accent-ink: oklch(1 0 0);
+  /* #ffffff 强调上的文字 */
+  --bby-line: oklch(0.91 0.005 90);
+  /* #e2e1de 细线 */
+  --bby-line-strong: oklch(0.87 0.006 90);
+  /* #d6d4d0 */
+  --bby-danger: oklch(0.52 0.18 25);
+  /* #ba2b2e 删除/警示(AA) */
+  --bby-danger-soft: oklch(0.52 0.18 25 / 0.1);
+  --bby-warning: oklch(0.55 0.1 75);
+  /* #936823 待办/提示(AA) */
+  --bby-warning-soft: oklch(0.55 0.1 75 / 0.12);
+  --bby-overlay: oklch(0.252 0.056 264 / 0.34);
+  /* 遮罩 */
+  --bby-shadow: 0 18px 48px -20px oklch(0.252 0.056 264 / 0.22),
+    0 4px 12px -6px oklch(0.252 0.056 264 / 0.1);
+}
+
+/* ========== 夜 · 海军黑 ==========
+   底色是深海军蓝(比纯黑更有层次),强调是青瓷绿,提气而不刺眼。 */
+.bby-root[data-theme='night'] {
+  --bby-bg: #37353e;
+  --bby-surface: #44444e;
+  --bby-surface-2: #4e4d58;
+  --bby-ink: #d3dad9;
+  --bby-ink-soft: #b0b5b4;
+  --bby-ink-muted: #8e9392;
+  --bby-accent: #76abae;
+  --bby-accent-soft: #76abae26;
+  /* 15% opacity */
+  --bby-accent-ink: #2c3536;
+  --bby-line: #53525d;
+  --bby-line-strong: #686774;
+  --bby-danger: #d96b6b;
+  --bby-danger-soft: #d96b6b26;
+  /* 15% opacity */
+  --bby-warning: #d9b358;
+  --bby-warning-soft: #d9b35826;
+  /* 15% opacity */
+  --bby-overlay: #1f1e2499;
+  /* 60% opacity */
+  --bby-shadow: 0 20px 56px -22px #000000a6, 0 4px 14px -8px #00000080;
+}
+
+/* ========== 粉彩 ==========
+   独立主题,不分昼夜。薰衣草粉纸底 + 浅粉强调,梦幻而不失可读性。
+   浅粉只用于强调/染色;文字用够深的梅紫,保证可读。 */
+.bby-root[data-theme='pastel'] {
+  --bby-bg: oklch(0.975 0.012 330);
+  /* #fcf4fb 薰衣草粉纸 */
+  --bby-surface: oklch(1 0 0);
+  /* #ffffff 抬起面/卡片 */
+  --bby-surface-2: oklch(0.955 0.022 335);
+  /* #faebf6 次级面/输入框 */
+  --bby-ink: oklch(0.36 0.09 330);
+  /* #572953 深梅紫 · 主文字 */
+  --bby-ink-soft: oklch(0.52 0.08 330);
+  /* #83587f 次级文字 */
+  --bby-ink-muted: oklch(0.64 0.07 330);
+  /* #a57da1 弱化/占位 */
+  --bby-accent: #ffafcc;
+  /* 浅粉 · 强调(与柏宝书一致) */
+  --bby-accent-soft: oklch(0.58 0.16 5 / 0.12);
+  --bby-accent-ink: oklch(1 0 0);
+  /* #ffffff 强调上的文字 */
+  --bby-line: oklch(0.91 0.025 330);
+  /* #ebdce9 细线 */
+  --bby-line-strong: oklch(0.86 0.035 335);
+  /* #e0c9da */
+  --bby-danger: oklch(0.55 0.19 15);
+  /* #c72c4c 删除/警示(AA) */
+  --bby-danger-soft: oklch(0.55 0.19 15 / 0.1);
+  --bby-warning: oklch(0.62 0.12 70);
+  /* #b47825 待办/提示(AA) */
+  --bby-warning-soft: oklch(0.62 0.12 70 / 0.12);
+  --bby-overlay: oklch(0.36 0.09 330 / 0.32);
+  /* 遮罩 */
+  --bby-shadow: 0 18px 48px -20px oklch(0.45 0.15 350 / 0.3),
+    0 4px 12px -6px oklch(0.45 0.15 350 / 0.16);
+}
+
+/* 粉彩强调色是浅粉(#ffafcc),原生 accent-color 复选框会按浅底自动把勾翻成黑色。
+   仅在本主题下把复选框改为自绘:浅粉底 + 强制白色对勾。作用域限定 pastel,不影响其他主题。 */
+.bby-root[data-theme='pastel'] .bby-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1.5px solid var(--bby-line-strong);
+  border-radius: 4px;
+  background: var(--bby-surface);
+}
+
+.bby-root[data-theme='pastel'] .bby-checkbox:checked {
+  border-color: var(--bby-accent);
+  background-color: var(--bby-accent);
+  /* 白色对勾,内联 SVG,与底色无关,不再受浏览器自动反色影响 */
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='M5 12.5 10 17.5 19 7'/></svg>");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 14px;
+}
+
+/* ========== 绿色 · 木白 ========== */
+.bby-root[data-theme='green'] {
+  --bby-bg: #f0f6f8;
+  /* Pale, misty lake blue */
+  --bby-surface: #ffffff;
+  --bby-surface-2: #e0efe8;
+  /* Soft seafoam green for highlights */
+  --bby-ink: #2c4a52;
+  /* Deep slate-teal for reading */
+  --bby-ink-soft: #638289;
+  --bby-ink-muted: #95aeb4;
+  --bby-accent: #529e93;
+  /* Gentle blue-green aquamarine */
+  --bby-accent-soft: #529e9326;
+  /* 15% opacity */
+  --bby-accent-ink: #ffffff;
+  --bby-line: #bfe3df;
+  --bby-line-strong: #8ac2bb;
+  --bby-danger: #d47979;
+  /* Soft coral */
+  --bby-danger-soft: #d4797926;
+  /* 15% opacity */
+  --bby-warning: #d9b76b;
+  /* Warm sand */
+  --bby-warning-soft: #d9b76b26;
+  /* 15% opacity */
+  --bby-overlay: #2c4a5266;
+  /* 40% deep teal overlay */
+  --bby-shadow: 0 20px 56px -22px #32646033, 0 4px 14px -8px #3264601a;
+}
+
+/* ========== 跟随 ST ==========
+   不定义自己的配色,而是从 SillyTavern 宿主主题的 --SmartTheme* 变量派生。
+   自定义属性可穿透 shadow 边界继承进来;缺的 token 用 color-mix 从基色派生,
+   每个 var() 都带回退值。danger/warning ST 无语义色 → 用中性可读值;
+   overlay 用中性深色遮罩,不跟随 body 色,避免暗色主题下遮罩反而变浅。 */
+.bby-root[data-theme='st'] {
+  --bby-bg: var(--SmartThemeBlurTintColor, #f6f5f2);
+  --bby-surface: var(--SmartThemeChatTintColor, #ffffff);
+  /* 次级面:面色掺一点主文字色,拉开与 surface 的层次(输入框/次级块) */
+  --bby-surface-2: color-mix(in srgb, var(--SmartThemeChatTintColor, #fff) 92%, var(--SmartThemeBodyColor, #000));
+  --bby-ink: var(--SmartThemeBodyColor, #14213d);
+  /* 次级/弱化文字:主文字向底色退让 */
+  --bby-ink-soft: color-mix(in srgb, var(--SmartThemeBodyColor, #14213d) 72%, var(--SmartThemeBlurTintColor, #f6f5f2));
+  --bby-ink-muted: color-mix(in srgb, var(--SmartThemeBodyColor, #14213d) 52%, var(--SmartThemeBlurTintColor, #f6f5f2));
+  --bby-accent: var(--SmartThemeQuoteColor, #718cc1);
+  --bby-accent-soft: color-mix(in srgb, var(--SmartThemeQuoteColor, #718cc1) 14%, transparent);
+  /* 强调上的文字:借界面底色反差(适配多数 ST 配色:深强调 × 浅底) */
+  --bby-accent-ink: var(--SmartThemeBlurTintColor, #ffffff);
+  --bby-line: var(--SmartThemeBorderColor, #cfbcbc);
+  --bby-line-strong: color-mix(in srgb, var(--SmartThemeBorderColor, #cfbcbc) 70%, var(--SmartThemeBodyColor, #000));
+  --bby-danger: #d96b6b;
+  --bby-danger-soft: #d96b6b26;
+  /* 15% opacity */
+  --bby-warning: #d9a441;
+  --bby-warning-soft: #d9a44126;
+  /* 15% opacity */
+  --bby-overlay: #00000073;
+  /* 45% 中性遮罩,不随 body 色反转 */
+  --bby-shadow: 0 18px 48px -20px var(--SmartThemeShadowColor, #00000038),
+    0 4px 12px -6px var(--SmartThemeShadowColor, #0000001a);
+}

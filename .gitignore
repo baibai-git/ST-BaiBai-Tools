@@ -9,3 +9,4 @@ node_modules/
 Trace-*.json
 dist/*.map
 .preview/
+docs/

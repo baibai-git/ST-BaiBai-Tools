@@ -55,6 +55,7 @@ const defaultSettings = {
     regexListGroups: {},
     chatDeleteEditFlowOptimizationEnabled: true,
     messageEditBottomActionsEnabled: true,
+    newFloorManagerEnabled: true,
     messageDoubleClickEditEnabled: false,
     messageTripleClickEditEnabled: true,
     messageCompletionSoundEnabled: false,

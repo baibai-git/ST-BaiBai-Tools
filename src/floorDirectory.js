@@ -7,11 +7,13 @@
 // 本模块刻意不静态 import 任何酒馆模块，所有数据/函数都在运行时从
 // globalThis.SillyTavern.getContext() 取，以规避版本兼容问题。
 
-import { captureFloorShot, configureFloorShot, downloadBlob } from './floorShot.js';
+import { captureFloorShot, downloadBlob } from './pen/st/floorShot.ts';
 
 let settings = {};
 let extensionState = {};
 let LOG_PREFIX = '[FloorDirectory]';
+// 菜单按钮点开时实际打开哪个窗口;由 floorManager 按「新版楼层管理器」开关决定
+let openHandler = null;
 
 const MENU_BUTTON_ID = 'bai_bai_toolkit_floor_directory_button';
 const MENU_CONTAINER_ID = 'bai_bai_toolkit_floor_directory_wand_container';
@@ -27,7 +29,7 @@ export function configureFloorDirectory(context = {}) {
     settings = context.settings ?? settings;
     extensionState = context.extensionState ?? extensionState;
     LOG_PREFIX = context.logPrefix ?? LOG_PREFIX;
-    configureFloorShot({ logPrefix: LOG_PREFIX });
+    openHandler = context.open ?? openHandler;
 }
 
 // ---------------------------------------------------------------------------
@@ -385,7 +387,7 @@ export function installFloorDirectory() {
         menu.appendChild(container);
 
         // 点击会冒泡到酒馆绑定在 html 上的处理器，魔棒菜单会自动收起，无需手动隐藏。
-        const open = () => openFloorDirectoryDialog();
+        const open = () => (openHandler ?? openFloorDirectoryDialog)();
         button.addEventListener('click', open);
         button.addEventListener('keydown', event => {
             if (event.key === 'Enter' || event.key === ' ') {
@@ -405,7 +407,7 @@ export function installFloorDirectory() {
 // 弹窗
 // ---------------------------------------------------------------------------
 
-function openFloorDirectoryDialog() {
+export function openFloorDirectoryDialog() {
     // 同一时刻只允许一个弹窗。
     document.querySelector(`.${OVERLAY_CLASS}`)?.remove();
 
@@ -928,7 +930,7 @@ function openFloorDirectoryDialog() {
             toastInfo(`正在截取第 ${index} 层…`, { showDuration: 0 });
             try {
                 await waitForNextPaint();
-                const { blob, outcome } = await captureFloorShot(index, freshCtx);
+                const { blob, outcome } = await captureFloorShot(index);
                 downloadBlob(blob, outcome.suggestedName);
                 if (outcome.frontendBlocks > outcome.iframesCaptured) {
                     const missed = outcome.frontendBlocks - outcome.iframesCaptured;
